@@ -58,9 +58,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route
-          element={
-            <AppLayout />
-          }
+          element={<AppLayout />}
         >
           <Route
             path="/"
@@ -74,9 +72,7 @@ function App() {
 
           <Route
             path="/operations"
-            element={
-              <OperationsLayout />
-            }
+            element={<OperationsLayout />}
           >
             <Route
               index
@@ -90,87 +86,61 @@ function App() {
 
             <Route
               path="receiving"
-              element={
-                <ReceivingPage />
-              }
+              element={<ReceivingPage />}
             />
 
             <Route
               path="inventory"
-              element={
-                <InventoryPage />
-              }
+              element={<InventoryPage />}
             />
 
             <Route
               path="billing"
-              element={
-                <BillingPage
-                  view="invoice"
-                />
-              }
+              element={<BillingPage />}
             />
 
             <Route
               path="osd"
-              element={
-                <BillingPage
-                  view="osd"
-                />
-              }
+              element={<DiscrepanciesPage />}
             />
           </Route>
 
           <Route
             path="/operations/receiving/new"
-            element={
-              <NewReceivingPage />
-            }
+            element={<NewReceivingPage />}
           />
 
           <Route
             path="/operations/receiving/:id"
-            element={
-              <ReceptionDetailPage />
-            }
+            element={<ReceptionDetailPage />}
           />
 
           <Route
             path="/shipments"
-            element={
-              <ShipmentsPage />
-            }
+            element={<ShipmentsPage />}
           />
 
           <Route
             path="/locations"
-            element={
-              <LocationsPage />
-            }
+            element={<LocationsPage />}
           />
 
           <Route
             path="/reports"
-            element={
-              <ReportsPage />
-            }
+            element={<ReportsPage />}
           />
 
           <Route
             path="/settings"
-            element={
-              <SettingsPage />
-            }
+            element={<SettingsPage />}
           />
 
           <Route
             path="/discrepancies"
-            element={
-              <DiscrepanciesPage />
-            }
+            element={<DiscrepanciesPage />}
           />
 
-          {/* Rutas antiguas: se conservan para no romper botones existentes */}
+          {/* Rutas antiguas */}
           <Route
             path="/receiving"
             element={
@@ -193,9 +163,7 @@ function App() {
 
           <Route
             path="/receiving/:id"
-            element={
-              <LegacyReceptionRedirect />
-            }
+            element={<LegacyReceptionRedirect />}
           />
 
           <Route
@@ -217,6 +185,16 @@ function App() {
               />
             }
           />
+
+          <Route
+            path="/osd"
+            element={
+              <Navigate
+                to="/operations/osd"
+                replace
+              />
+            }
+          />
         </Route>
       </Routes>
     </BrowserRouter>
@@ -224,10 +202,9 @@ function App() {
 }
 
 function LegacyReceptionRedirect() {
-  const id =
-    window.location.pathname
-      .split('/')
-      .filter(Boolean)[1]
+  const id = window.location.pathname
+    .split('/')
+    .filter(Boolean)[1]
 
   return (
     <Navigate
