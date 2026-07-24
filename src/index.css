@@ -1,0 +1,386 @@
+@import "tailwindcss";
+
+/* Tailwind v4: dark mode controlled by the .dark class on <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+   GGG SMART WAREHOUSE — LIGHT + DARK THEME
+   ============================================================ */
+
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  --ggg-page: #f5f7fb;
+  --ggg-card: #ffffff;
+  --ggg-card-soft: #eef2f7;
+  --ggg-text: #0b2444;
+  --ggg-text-secondary: #52677f;
+  --ggg-text-muted: #718096;
+  --ggg-border: #dfe6ee;
+  --ggg-border-strong: #cbd5e1;
+  --ggg-input: #ffffff;
+  --ggg-sidebar: #0b2444;
+  --ggg-sidebar-border: #17395f;
+  --ggg-sidebar-text: #c7d5e5;
+  --ggg-sidebar-hover: #16385f;
+  --ggg-primary: #123a67;
+  --ggg-primary-soft: rgba(18, 58, 103, 0.08);
+  --ggg-nav-active: #e8b84a;
+  --ggg-nav-active-text: #0b2444;
+  --ggg-shadow: rgba(15, 39, 71, 0.10);
+}
+
+html.dark {
+  color-scheme: dark;
+
+  --ggg-page: #07111f;
+  --ggg-card: #0e1c2f;
+  --ggg-card-soft: #14243a;
+  --ggg-text: #f4f7fb;
+  --ggg-text-secondary: #c4d0df;
+  --ggg-text-muted: #8fa0b5;
+  --ggg-border: #20344f;
+  --ggg-border-strong: #2d4563;
+  --ggg-input: #091728;
+  --ggg-sidebar: #06162b;
+  --ggg-sidebar-border: #183554;
+  --ggg-sidebar-text: #c7d5e5;
+  --ggg-sidebar-hover: #102b49;
+  --ggg-primary: #2e6ca8;
+  --ggg-primary-soft: rgba(46, 108, 168, 0.14);
+  --ggg-nav-active: #e8b84a;
+  --ggg-nav-active-text: #07111f;
+  --ggg-shadow: rgba(0, 0, 0, 0.30);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background: var(--ggg-page);
+  color: var(--ggg-text);
+}
+
+/* ============================================================
+   GLOBAL MAPPING FOR LEGACY TAILWIND CLASSES
+   ============================================================ */
+
+.bg-slate-950 {
+  background-color: var(--ggg-page) !important;
+}
+
+.bg-slate-900 {
+  background-color: var(--ggg-card) !important;
+}
+
+.bg-slate-900\/95 {
+  background-color: color-mix(in srgb, var(--ggg-card) 96%, transparent) !important;
+}
+
+.bg-slate-900\/90 {
+  background-color: color-mix(in srgb, var(--ggg-card) 94%, transparent) !important;
+}
+
+.bg-slate-800 {
+  background-color: var(--ggg-card-soft) !important;
+}
+
+.bg-slate-800\/50 {
+  background-color: color-mix(in srgb, var(--ggg-card-soft) 70%, transparent) !important;
+}
+
+.text-white,
+.text-slate-950 {
+  color: var(--ggg-text) !important;
+}
+
+.text-slate-300,
+.text-slate-400 {
+  color: var(--ggg-text-secondary) !important;
+}
+
+.text-slate-500,
+.text-slate-600 {
+  color: var(--ggg-text-muted) !important;
+}
+
+.border-slate-800 {
+  border-color: var(--ggg-border) !important;
+}
+
+.border-slate-700 {
+  border-color: var(--ggg-border-strong) !important;
+}
+
+input,
+select,
+textarea {
+  color: var(--ggg-text) !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ggg-text-muted) !important;
+}
+
+input.bg-slate-950,
+select.bg-slate-950,
+textarea.bg-slate-950 {
+  background-color: var(--ggg-input) !important;
+}
+
+.hover\:bg-slate-800:hover {
+  background-color: var(--ggg-card-soft) !important;
+}
+
+.hover\:text-white:hover {
+  color: var(--ggg-text) !important;
+}
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+
+aside.fixed.bg-slate-900 {
+  background-color: var(--ggg-sidebar) !important;
+  border-color: var(--ggg-sidebar-border) !important;
+}
+
+aside.fixed.bg-slate-900 .border-slate-800 {
+  border-color: var(--ggg-sidebar-border) !important;
+}
+
+aside.fixed.bg-slate-900 .text-slate-400,
+aside.fixed.bg-slate-900 .text-slate-300 {
+  color: var(--ggg-sidebar-text) !important;
+}
+
+aside.fixed.bg-slate-900 .text-white {
+  color: #ffffff !important;
+}
+
+aside.fixed.bg-slate-900 .hover\:bg-slate-800:hover {
+  background-color: var(--ggg-sidebar-hover) !important;
+}
+
+aside.fixed.bg-slate-900 .hover\:text-white:hover {
+  color: #ffffff !important;
+}
+
+header.bg-slate-900\/95 {
+  background-color: var(--ggg-card) !important;
+  border-color: var(--ggg-border) !important;
+}
+
+/* ============================================================
+   PRIMARY COLOR
+   ============================================================ */
+
+.bg-emerald-500 {
+  background-color: var(--ggg-primary) !important;
+}
+
+.bg-emerald-500\/10,
+.bg-emerald-500\/15,
+.bg-emerald-500\/20 {
+  background-color: var(--ggg-primary-soft) !important;
+}
+
+.text-emerald-300,
+.text-emerald-400 {
+  color: #2e6ca8 !important;
+}
+
+html.dark .text-emerald-300,
+html.dark .text-emerald-400 {
+  color: #72a9df !important;
+}
+
+.border-emerald-400\/50,
+.border-emerald-500\/30,
+.border-emerald-500\/50 {
+  border-color: rgba(46, 108, 168, 0.45) !important;
+}
+
+.focus\:border-emerald-500:focus {
+  border-color: var(--ggg-primary) !important;
+}
+
+.accent-emerald-500 {
+  accent-color: var(--ggg-primary) !important;
+}
+
+aside.fixed.bg-slate-900 a.bg-emerald-500 {
+  background-color: var(--ggg-nav-active) !important;
+  color: var(--ggg-nav-active-text) !important;
+}
+
+main .bg-emerald-500 {
+  background-color: var(--ggg-primary) !important;
+  color: #ffffff !important;
+}
+
+main .text-slate-950 {
+  color: var(--ggg-text) !important;
+}
+
+main .bg-emerald-500.text-slate-950,
+main .bg-emerald-500 .text-slate-950 {
+  color: #ffffff !important;
+}
+
+/* ============================================================
+   THEME TOGGLE
+   ============================================================ */
+
+.ggg-theme-toggle-wrapper {
+  border-top: 1px solid var(--ggg-sidebar-border);
+  padding: 14px 16px 18px;
+}
+
+.ggg-theme-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 12px;
+  padding: 11px 12px;
+  color: var(--ggg-sidebar-text);
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.ggg-theme-toggle:hover {
+  background: var(--ggg-sidebar-hover);
+  color: #ffffff;
+}
+
+.ggg-theme-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ggg-theme-switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #5f7186;
+  transition: background-color 180ms ease;
+}
+
+.ggg-theme-switch.is-active {
+  background: #e8b84a;
+}
+
+.ggg-theme-switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28);
+  transition: transform 180ms ease;
+}
+
+.ggg-theme-switch.is-active .ggg-theme-switch-knob {
+  transform: translateX(18px);
+}
+
+/* ============================================================
+   DETAILS
+   ============================================================ */
+
+.shadow-\[0_0_18px_rgba\(52\,211\,153\,0\.20\)\] {
+  box-shadow: 0 0 18px var(--ggg-shadow) !important;
+}
+
+* {
+  scrollbar-color: #8193a8 var(--ggg-card-soft);
+}
+
+::selection {
+  background: var(--ggg-primary);
+  color: #ffffff;
+}
+
+/* ============================================================
+   INPUTS / SELECTS / TEXTAREAS
+   ============================================================ */
+
+html:not(.dark) input,
+html:not(.dark) select,
+html:not(.dark) textarea {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  border-color: #cbd5e1 !important;
+}
+
+html:not(.dark) input::placeholder,
+html:not(.dark) textarea::placeholder {
+  color: #64748b !important;
+}
+
+html:not(.dark) input:focus,
+html:not(.dark) select:focus,
+html:not(.dark) textarea:focus {
+  border-color: #123a67 !important;
+  outline: none !important;
+}
+
+html.dark input,
+html.dark select,
+html.dark textarea {
+  background-color: #07111f !important;
+  color: #ffffff !important;
+  border-color: #2d4563 !important;
+}
+
+html.dark input::placeholder,
+html.dark textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+html.dark input:focus,
+html.dark select:focus,
+html.dark textarea:focus {
+  border-color: #72a9df !important;
+  outline: none !important;
+}
+
+html:not(.dark) option {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+
+html.dark option {
+  background-color: #07111f !important;
+  color: #ffffff !important;
+}
+
+html:not(.dark) .bg-slate-950 input,
+html:not(.dark) .bg-slate-950 select,
+html:not(.dark) .bg-slate-950 textarea,
+html:not(.dark) input.bg-slate-950,
+html:not(.dark) select.bg-slate-950,
+html:not(.dark) textarea.bg-slate-950 {
+  background-color: #ffffff !important;
+  color: #111827 !important;
+}
+
+html.dark .bg-slate-950 input,
+html.dark .bg-slate-950 select,
+html.dark .bg-slate-950 textarea,
+html.dark input.bg-slate-950,
+html.dark select.bg-slate-950,
+html.dark textarea.bg-slate-950 {
+  background-color: #07111f !important;
+  color: #ffffff !important;
+}
