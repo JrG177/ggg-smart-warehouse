@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   FileImage,
   Pencil,
-  Trash2,
   RefreshCcw,
   Search,
   X,
