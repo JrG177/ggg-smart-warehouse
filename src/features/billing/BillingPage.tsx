@@ -10,6 +10,8 @@ import {
   ChevronRight,
   CheckCircle2,
   FileImage,
+  Pencil,
+  Trash2,
   RefreshCcw,
   Search,
   X,
@@ -283,6 +285,46 @@ export function BillingPage() {
     setInvoiceViewerIndex,
   ] = useState(0)
 
+  const [
+    editingInvoice,
+    setEditingInvoice,
+  ] = useState<Invoice | null>(null)
+
+  const [
+    editInvoiceNumber,
+    setEditInvoiceNumber,
+  ] = useState('')
+
+  const [
+    editCarrier,
+    setEditCarrier,
+  ] = useState('')
+
+  const [
+    editPackageCount,
+    setEditPackageCount,
+  ] = useState('')
+
+  const [
+    savingInvoice,
+    setSavingInvoice,
+  ] = useState(false)
+
+  const [
+    deletingInvoice,
+    setDeletingInvoice,
+  ] = useState<Invoice | null>(null)
+
+  const [
+    deletingInvoiceId,
+    setDeletingInvoiceId,
+  ] = useState<string | null>(null)
+
+  const [
+    successMessage,
+    setSuccessMessage,
+  ] = useState('')
+
   const loadInvoices =
     async (
       showRefresh = false,
@@ -480,6 +522,202 @@ export function BillingPage() {
             !current[id],
         }),
       )
+    }
+  const openEditInvoice = (
+    invoice: Invoice,
+  ) => {
+    setError('')
+    setSuccessMessage('')
+    setEditingInvoice(invoice)
+    setEditInvoiceNumber(
+      invoice.invoice_number,
+    )
+    setEditCarrier(
+      invoice.carrier,
+    )
+    setEditPackageCount(
+      String(
+        invoice.package_count ??
+          0,
+      ),
+    )
+  }
+
+  const closeEditInvoice =
+    () => {
+      if (savingInvoice) {
+        return
+      }
+
+      setEditingInvoice(null)
+      setEditInvoiceNumber('')
+      setEditCarrier('')
+      setEditPackageCount('')
+    }
+
+  const saveInvoiceChanges =
+    async () => {
+      if (!editingInvoice) {
+        return
+      }
+
+      const rawInvoiceNumber =
+        editInvoiceNumber
+          .trim()
+          .toUpperCase()
+
+      const normalizedInvoiceNumber =
+        rawInvoiceNumber.startsWith(
+          'INV-',
+        )
+          ? rawInvoiceNumber
+          : `INV-${rawInvoiceNumber}`
+
+      const normalizedCarrier =
+        editCarrier.trim()
+
+      const normalizedPackageCount =
+        Number(
+          editPackageCount,
+        )
+
+      if (
+        !rawInvoiceNumber ||
+        normalizedInvoiceNumber ===
+          'INV-'
+      ) {
+        setError(
+          'El número de factura es obligatorio.',
+        )
+        return
+      }
+
+      if (!normalizedCarrier) {
+        setError(
+          'El carrier es obligatorio.',
+        )
+        return
+      }
+
+      if (
+        !Number.isInteger(
+          normalizedPackageCount,
+        ) ||
+        normalizedPackageCount <
+          0
+      ) {
+        setError(
+          'El número de bultos debe ser un número entero válido.',
+        )
+        return
+      }
+
+      try {
+        setSavingInvoice(true)
+        setError('')
+        setSuccessMessage('')
+
+        const {
+          data:
+            duplicateInvoice,
+          error:
+            duplicateError,
+        } = await supabase
+          .from('invoices')
+          .select('id')
+          .eq(
+            'invoice_number',
+            normalizedInvoiceNumber,
+          )
+          .neq(
+            'id',
+            editingInvoice.id,
+          )
+          .maybeSingle()
+
+        if (duplicateError) {
+          throw new Error(
+            duplicateError.message,
+          )
+        }
+
+        if (duplicateInvoice) {
+          setError(
+            `Ya existe una factura con el número ${normalizedInvoiceNumber}.`,
+          )
+          return
+        }
+
+        const {
+          data:
+            updatedInvoice,
+          error:
+            updateError,
+        } = await supabase
+          .from('invoices')
+.update({
+  invoice_number: normalizedInvoiceNumber,
+  carrier: normalizedCarrier,
+  package_count: normalizedPackageCount,
+})
+          .eq(
+            'id',
+            editingInvoice.id,
+          )
+          .select(`
+            id,
+            invoice_number,
+            carrier,
+            package_count
+          `)
+          .single()
+
+        if (updateError) {
+          throw new Error(
+            updateError.message,
+          )
+        }
+
+        setInvoices(
+          (current) =>
+            current.map(
+              (invoice) =>
+                invoice.id ===
+                editingInvoice.id
+                  ? {
+                      ...invoice,
+
+                      invoice_number:
+                        updatedInvoice.invoice_number,
+
+                      carrier:
+                        updatedInvoice.carrier,
+
+                      package_count:
+                        updatedInvoice.package_count,
+                    }
+                  : invoice,
+            ),
+        )
+
+        setSuccessMessage(
+          `La factura ${updatedInvoice.invoice_number} se actualizó correctamente.`,
+        )
+
+        setEditingInvoice(null)
+        setEditInvoiceNumber('')
+        setEditCarrier('')
+        setEditPackageCount('')
+      } catch (saveError) {
+        setError(
+          saveError instanceof
+            Error
+            ? saveError.message
+            : 'No se pudo actualizar la factura.',
+        )
+      } finally {
+        setSavingInvoice(false)
+      }
     }
 
   const completeInvoice =
@@ -1014,6 +1252,11 @@ export function BillingPage() {
           {error}
         </div>
       )}
+            {successMessage && (
+        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-5 py-4 text-sm font-semibold text-emerald-500">
+          {successMessage}
+        </div>
+      )}
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900">
         <div className="flex flex-col gap-4 border-b border-slate-800 p-5 lg:flex-row lg:items-center lg:justify-between">
@@ -1322,6 +1565,19 @@ export function BillingPage() {
                         {invoice.status ===
                           'open' && (
                           <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openEditInvoice(
+                                  invoice,
+                                )
+                              }
+                              className="inline-flex items-center gap-2 rounded-xl border border-blue-500/40 px-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-500/10"
+                            >
+                              <Pencil size={17} />
+                              Editar
+                            </button>
+
                             <label className="flex items-center gap-2 rounded-xl border border-slate-700 px-3 py-2">
                               <span className="whitespace-nowrap text-xs font-semibold text-slate-400">
                                 # de Bultos
@@ -1591,6 +1847,141 @@ export function BillingPage() {
         </div>
       </section>
 
+      {editingInvoice && (
+        <div
+          className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Editar factura ${editingInvoice.invoice_number}`}
+          onClick={closeEditInvoice}
+        >
+          <div
+            className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+            <div className="flex items-center justify-between border-b border-slate-700 px-5 py-4">
+              <div>
+                <p className="text-sm text-slate-400">
+                  Modificar información
+                </p>
+
+                <h2 className="mt-1 text-xl font-bold">
+                  Editar factura
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeEditInvoice}
+                disabled={savingInvoice}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                aria-label="Cerrar edición"
+                title="Cerrar"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form
+              className="space-y-5 p-5"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void saveInvoiceChanges()
+              }}
+            >
+              <div>
+                <label
+                  htmlFor="edit-invoice-number"
+                  className="mb-2 block text-sm font-semibold text-slate-300"
+                >
+                  Número de factura
+                </label>
+
+                <input
+                  id="edit-invoice-number"
+                  value={editInvoiceNumber}
+                  onChange={(event) =>
+                    setEditInvoiceNumber(
+                      event.target.value,
+                    )
+                  }
+                  placeholder="INV-00000"
+                  autoFocus
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="edit-carrier"
+                  className="mb-2 block text-sm font-semibold text-slate-300"
+                >
+                  Carrier
+                </label>
+
+                <input
+                  id="edit-carrier"
+                  value={editCarrier}
+                  onChange={(event) =>
+                    setEditCarrier(
+                      event.target.value,
+                    )
+                  }
+                  placeholder="Nombre del carrier"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="edit-package-count"
+                  className="mb-2 block text-sm font-semibold text-slate-300"
+                >
+                  Número de bultos
+                </label>
+
+                <input
+                  id="edit-package-count"
+                  type="number"
+                  min="0"
+                  inputMode="numeric"
+                  value={editPackageCount}
+                  onChange={(event) =>
+                    setEditPackageCount(
+                      event.target.value,
+                    )
+                  }
+                  placeholder="0"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="flex flex-col-reverse gap-3 border-t border-slate-800 pt-5 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeEditInvoice}
+                  disabled={savingInvoice}
+                  className="rounded-xl border border-slate-700 px-5 py-2.5 text-sm font-semibold text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={savingInvoice}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingInvoice
+                    ? 'Guardando...'
+                    : 'Guardar cambios'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       {invoiceViewerOpen && (
         <div
           className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-4"
