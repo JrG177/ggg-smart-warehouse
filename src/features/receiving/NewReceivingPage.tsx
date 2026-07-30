@@ -752,66 +752,6 @@ export function NewReceivingPage() {
     )
   }
 
-  const syncExpectedPallets =
-    () => {
-      const expected =
-        Number(
-          formData.palletCount,
-        )
-
-      if (
-        !Number.isInteger(
-          expected,
-        ) ||
-        expected <
-          1
-      ) {
-        return
-      }
-
-      setPallets(
-        (
-          previous,
-        ) => {
-          if (
-            previous.length ===
-            expected
-          ) {
-            return previous
-          }
-
-          if (
-            previous.length <
-            expected
-          ) {
-            return [
-              ...previous,
-
-              ...Array.from(
-                {
-                  length:
-                    expected -
-                    previous.length,
-                },
-
-                () =>
-                  createPallet(),
-              ),
-            ]
-          }
-
-          return previous.slice(
-            0,
-            expected,
-          )
-        },
-      )
-
-      setCurrentPalletIndex(
-        0,
-      )
-  }
-
   const handlePhotoUpload = (
     palletId:
       string,
@@ -995,25 +935,6 @@ export function NewReceivingPage() {
         return false
       }
 
-      const expected =
-        Number(
-          formData.palletCount,
-        )
-
-      if (
-        !Number.isInteger(
-          expected,
-        ) ||
-        expected <
-          1
-      ) {
-        setGeneralError(
-          'Captura una cantidad válida de pallets o contenedores.',
-        )
-
-        return false
-      }
-
       setGeneralError(
         '',
       )
@@ -1128,57 +1049,178 @@ export function NewReceivingPage() {
     return true
   }
 
-  const completeCurrentPallet =
-    () => {
-      if (
-        !currentPallet ||
-        !validatePallet(
-          currentPallet,
-        )
-      ) {
-        return
-      }
+const addPallet =
+  () => {
+    const newPallet =
+      createPallet()
 
-      setPallets(
+    setPallets(
+      (
+        previous,
+      ) => [
+        ...previous,
+        newPallet,
+      ],
+    )
+
+    setCurrentPalletIndex(
+      pallets.length,
+    )
+
+    setPalletError(
+      '',
+    )
+  }
+
+const removeCurrentPallet =
+  () => {
+    if (
+      pallets.length ===
+      1
+    ) {
+      setPalletError(
+        'La recepción debe conservar al menos un pallet.',
+      )
+
+      return
+    }
+
+    const palletToRemove =
+      pallets[
+        currentPalletIndex
+      ]
+
+    palletToRemove.photos
+      .packingList
+      .forEach(
         (
-          previous,
+          photo,
         ) =>
-          previous.map(
-            (
-              pallet,
-            ) =>
-              pallet.id ===
-              currentPallet.id
-                ? {
-                    ...pallet,
-
-                    completed:
-                      true,
-                  }
-                : pallet,
+          URL.revokeObjectURL(
+            photo.preview,
           ),
       )
 
-      if (
-        currentPalletIndex <
-        pallets.length -
-          1
-      ) {
-        setCurrentPalletIndex(
+    palletToRemove.photos
+      .palletLabel
+      .forEach(
+        (
+          photo,
+        ) =>
+          URL.revokeObjectURL(
+            photo.preview,
+          ),
+      )
+
+    palletToRemove.photos
+      .palletPhoto
+      .forEach(
+        (
+          photo,
+        ) =>
+          URL.revokeObjectURL(
+            photo.preview,
+          ),
+      )
+
+    palletToRemove.photos.bol
+      .forEach(
+        (
+          photo,
+        ) =>
+          URL.revokeObjectURL(
+            photo.preview,
+          ),
+      )
+
+    palletToRemove.photos.damage
+      .forEach(
+        (
+          photo,
+        ) =>
+          URL.revokeObjectURL(
+            photo.preview,
+          ),
+      )
+
+    setPallets(
+      (
+        previous,
+      ) =>
+        previous.filter(
           (
-            previous,
+            pallet,
           ) =>
-            previous +
+            pallet.id !==
+            palletToRemove.id,
+        ),
+    )
+
+    setCurrentPalletIndex(
+      (
+        previous,
+      ) =>
+        previous ===
+        0
+          ? 0
+          : previous -
             1,
-        )
-      } else {
-        setCurrentStep(
-          3,
-        )
-      }
+    )
+
+    setPalletError(
+      '',
+    )
+  }
+
+const completeCurrentPallet =
+  () => {
+    if (
+      !currentPallet ||
+      !validatePallet(
+        currentPallet,
+      )
+    ) {
+      return
     }
 
-  const completedPallets =
+    setPallets(
+      (
+        previous,
+      ) =>
+        previous.map(
+          (
+            pallet,
+          ) =>
+            pallet.id ===
+            currentPallet.id
+              ? {
+                  ...pallet,
+                  completed:
+                    true,
+                }
+              : pallet,
+        ),
+    )
+
+    if (
+      currentPalletIndex <
+      pallets.length -
+        1
+    ) {
+      setCurrentPalletIndex(
+        (
+          previous,
+        ) =>
+          previous +
+          1,
+      )
+    }
+
+    setPalletError(
+      '',
+    )
+  }
+  const completedPallets=
     pallets.filter(
       (
         pallet,
@@ -1286,8 +1328,6 @@ export function NewReceivingPage() {
           return
         }
 
-        syncExpectedPallets()
-
         setCurrentStep(
           2,
         )
@@ -1376,31 +1416,32 @@ export function NewReceivingPage() {
           '',
         )
 
-        await createReception({
-          carrier:
-            formData.carrier,
+await createReception({
+  carrier:
+    formData.carrier,
 
-          otherCarrier:
-            formData.otherCarrier,
+  otherCarrier:
+    formData.otherCarrier,
 
-          trailer:
-            formData.trailer,
+  trailer:
+    formData.trailer,
 
-          palletCount:
-            formData.palletCount,
+  palletCount:
+    String(
+      pallets.length,
+    ),
 
-          seal:
-            formData.seal,
+  seal:
+    formData.seal,
 
-          receptionDate:
-            formData.receptionDate,
+  receptionDate:
+    formData.receptionDate,
 
-          receptionTime:
-            formData.receptionTime,
+  receptionTime:
+    formData.receptionTime,
 
-          pallets,
-        })
-
+  pallets,
+})
         window.localStorage.removeItem(
           DRAFT_STORAGE_KEY,
         )
@@ -1625,24 +1666,6 @@ export function NewReceivingPage() {
                 />
               </FormField>
 
-              <FormField label="Número de pallets">
-                <input
-                  type="number"
-                  min="1"
-                  value={
-                    formData.palletCount
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    updateField(
-                      'palletCount',
-                      event.target.value,
-                    )
-                  }
-                  className="input-style"
-                />
-              </FormField>
 
               <FormField label="Fecha">
                 <input
@@ -1713,23 +1736,65 @@ export function NewReceivingPage() {
           2 &&
           currentPallet && (
           <div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-semibold text-blue-800 dark:text-emerald-400">
-                  Pallet{' '}
-                  {currentPalletIndex +
-                    1}{' '}
-                  de{' '}
-                  {
-                    pallets.length
-                  }
-                </p>
+<div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  <div>
+    <p className="text-sm font-semibold text-blue-800 dark:text-emerald-400">
+      Pallet{' '}
+      {currentPalletIndex +
+        1}{' '}
+      de{' '}
+      {
+        pallets.length
+      }
+    </p>
 
-                <h2 className="mt-2 text-xl font-semibold text-slate-950 dark:text-white">
-                  Registrar pallet
-                </h2>
-              </div>
-            </div>
+    <h2 className="mt-2 text-xl font-semibold text-slate-950 dark:text-white">
+      Registrar pallet
+    </h2>
+
+    <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+      El total se calcula automáticamente conforme agregas o eliminas pallets.
+    </p>
+  </div>
+
+  <div className="flex flex-wrap gap-2">
+    <button
+      type="button"
+      onClick={
+        addPallet
+      }
+      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-slate-950"
+    >
+      <Plus
+        size={
+          17
+        }
+      />
+
+      Agregar pallet
+    </button>
+
+    <button
+      type="button"
+      disabled={
+        pallets.length ===
+        1
+      }
+      onClick={
+        removeCurrentPallet
+      }
+      className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/40 px-4 py-2.5 text-sm font-semibold text-red-600 disabled:cursor-not-allowed disabled:opacity-40 dark:text-red-400"
+    >
+      <Trash2
+        size={
+          17
+        }
+      />
+
+      Eliminar pallet
+    </button>
+  </div>
+</div>
 
             <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2">
 
@@ -2151,54 +2216,57 @@ export function NewReceivingPage() {
               />
             )}
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+<div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <button
+    type="button"
+    disabled={currentPalletIndex === 0}
+    onClick={() =>
+      setCurrentPalletIndex((previous) => previous - 1)
+    }
+    className="w-full rounded-xl border border-slate-300 px-5 py-3 text-sm text-slate-700 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 sm:w-auto"
+  >
+    Pallet anterior
+  </button>
 
-              <button
-                type="button"
-                disabled={
-                  currentPalletIndex ===
-                  0
-                }
-                onClick={() =>
-                  setCurrentPalletIndex(
-                    (
-                      previous,
-                    ) =>
-                      previous -
-                      1,
-                  )
-                }
-                className="w-full rounded-xl border border-slate-300 px-5 py-3 text-sm text-slate-700 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 sm:w-auto"
-              >
-                Pallet anterior
-              </button>
+  <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+    <button
+      type="button"
+      onClick={completeCurrentPallet}
+      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500 px-5 py-3 font-semibold text-emerald-700 dark:text-emerald-400 sm:w-auto"
+    >
+      <Check size={18} />
 
-              <button
-                type="button"
-                onClick={
-                  completeCurrentPallet
-                }
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950 sm:w-auto"
-              >
-                {currentPalletIndex <
-                pallets.length -
-                  1
-                  ? 'Guardar pallet y continuar'
-                  : 'Finalizar pallets'}
+      {currentPallet.completed
+        ? 'Pallet guardado'
+        : 'Guardar pallet'}
+    </button>
 
-                <ArrowRight
-                  size={
-                    18
-                  }
-                />
-              </button>
+    <button
+      type="button"
+      disabled={completedPallets !== pallets.length}
+      onClick={() => {
+        if (completedPallets !== pallets.length) {
+          setPalletError(
+            'Debes guardar todos los pallets antes de continuar a verificación.',
+          )
+          return
+        }
 
-            </div>
+        setPalletError('')
+        setCurrentStep(3)
+      }}
+      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+    >
+      Continuar a verificación
+      <ArrowRight size={18} />
+    </button>
+  </div>
+</div>
+
           </div>
         )}
 
-        {currentStep ===
-          3 && (
+        {currentStep === 3 && (
           <div>
             <h2 className="text-xl font-semibold text-slate-950 dark:text-white">
               Verificación
@@ -2323,12 +2391,12 @@ export function NewReceivingPage() {
                   }
                 />
 
-                <SummaryRow
-                  label="Pallets"
-                  value={
-                    formData.palletCount
-                  }
-                />
+<SummaryRow
+  label="Pallets registrados"
+  value={String(
+    pallets.length,
+  )}
+/>
 
                 <SummaryRow
                   label="Fecha"
@@ -2394,7 +2462,6 @@ export function NewReceivingPage() {
         {currentStep !==
           2 && (
           <div className="mt-8 flex flex-col gap-3 border-t border-slate-200 pt-6 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
-
             <button
               type="button"
               onClick={
@@ -2483,9 +2550,8 @@ export function NewReceivingPage() {
           }
         `}
       </style>
-
-    </div>
-  )
+  </div>
+ )
 }
 
 function MultiPhotoBox({
