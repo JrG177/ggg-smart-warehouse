@@ -310,16 +310,6 @@ export function BillingPage() {
   ] = useState(false)
 
   const [
-    deletingInvoice,
-    setDeletingInvoice,
-  ] = useState<Invoice | null>(null)
-
-  const [
-    deletingInvoiceId,
-    setDeletingInvoiceId,
-  ] = useState<string | null>(null)
-
-  const [
     successMessage,
     setSuccessMessage,
   ] = useState('')
