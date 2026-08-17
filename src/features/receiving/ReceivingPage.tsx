@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Eye,
+  Camera,
   FileText,
   PackagePlus,
   RefreshCcw,
@@ -695,20 +696,34 @@ export function ReceivingPage() {
           </p>
         </div>
 
-        <button
-          onClick={() =>
-            navigate(
-              '/receiving/new',
-            )
-          }
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950 transition hover:bg-emerald-400"
-        >
-          <PackagePlus
-            size={20}
-          />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <button
+            onClick={() =>
+              navigate(
+                '/operations/receiving/quick',
+              )
+            }
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-5 py-3 font-semibold text-emerald-400 transition hover:bg-emerald-500/20"
+          >
+            <Camera size={20} />
+            Recepción rápida
+          </button>
 
-          Nueva recepción
-        </button>
+          <button
+            onClick={() =>
+              navigate(
+                '/receiving/new',
+              )
+            }
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950 transition hover:bg-emerald-400"
+          >
+            <PackagePlus
+              size={20}
+            />
+
+            Recepción completa
+          </button>
+        </div>
       </section>
 
       <section className="grid gap-4 md:grid-cols-4">
