@@ -19,6 +19,85 @@ export type QuickReceptionResult = {
   reference_number: string
 }
 
+export type QuickReceptionPhoto = {
+  id: string
+  photo_type: QuickPhotoType
+  storage_path: string
+  created_at: string
+  signed_url: string
+}
+
+export type QuickReceptionHistoryItem = {
+  id: string
+  reference_number: string
+  client: QuickReceptionClient
+  status: 'uploading' | 'completed'
+  observations: string | null
+  created_at: string
+  photos: QuickReceptionPhoto[]
+}
+
+type QuickReceptionHistoryRow = Omit<
+  QuickReceptionHistoryItem,
+  'photos'
+> & {
+  quick_reception_photos: Omit<QuickReceptionPhoto, 'signed_url'>[] | null
+}
+
+export async function getQuickReceptionHistory() {
+  const { data, error } = await supabase
+    .from('quick_receptions')
+    .select(`
+      id,
+      reference_number,
+      client,
+      status,
+      observations,
+      created_at,
+      quick_reception_photos (
+        id,
+        photo_type,
+        storage_path,
+        created_at
+      )
+    `)
+    .order('created_at', { ascending: false })
+    .limit(100)
+
+  if (error) {
+    throw new Error(`No se pudo cargar el historial: ${error.message}`)
+  }
+
+  const rows = (data || []) as QuickReceptionHistoryRow[]
+
+  return Promise.all(
+    rows.map(async (row) => {
+      const photos = await Promise.all(
+        (row.quick_reception_photos || []).map(async (photo) => {
+          const { data: signedData, error: signedError } =
+            await supabase.storage
+              .from('quick-reception-evidence')
+              .createSignedUrl(photo.storage_path, 60 * 60)
+
+          if (signedError || !signedData?.signedUrl) {
+            throw new Error(
+              `No se pudo abrir una fotografía: ${signedError?.message || 'URL no disponible'}`,
+            )
+          }
+
+          return {
+            ...photo,
+            signed_url: signedData.signedUrl,
+          }
+        }),
+      )
+
+      const { quick_reception_photos: _photos, ...reception } = row
+      return { ...reception, photos } as QuickReceptionHistoryItem
+    }),
+  )
+}
+
 function getExtension(file: File) {
   const extension = file.name.split('.').pop()
   return extension?.toLowerCase() || 'jpg'

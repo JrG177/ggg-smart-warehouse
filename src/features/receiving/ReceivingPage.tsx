@@ -4,6 +4,7 @@ import {
   Eye,
   Camera,
   FileText,
+  History,
   PackagePlus,
   RefreshCcw,
   Search,
@@ -696,7 +697,7 @@ export function ReceivingPage() {
           </p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-3">
           <button
             onClick={() =>
               navigate(
@@ -707,6 +708,18 @@ export function ReceivingPage() {
           >
             <Camera size={20} />
             Recepción rápida
+          </button>
+
+          <button
+            onClick={() =>
+              navigate(
+                '/operations/receiving/quick/history',
+              )
+            }
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-5 py-3 font-semibold text-slate-300 transition hover:bg-slate-800"
+          >
+            <History size={20} />
+            Historial rápido
           </button>
 
           <button

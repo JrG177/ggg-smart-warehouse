@@ -117,6 +117,7 @@ export function QuickReceivingPage() {
 
   function resetForm() {
     setPhotos({})
+    setObservations('')
     setError('')
     setSuccessReference('')
   }
@@ -181,10 +182,10 @@ export function QuickReceivingPage() {
 
             <button
               type="button"
-              onClick={() => navigate('/operations/receiving')}
+              onClick={() => navigate('/operations/receiving/quick/history')}
               className="min-h-12 rounded-xl border border-slate-700 px-5 font-semibold text-slate-300 transition hover:bg-slate-800"
             >
-              Volver a recepciones
+              Ver historial rápido
             </button>
           </div>
         </section>

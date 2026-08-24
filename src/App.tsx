@@ -22,12 +22,16 @@ import {
 } from './features/receiving/NewReceivingPage'
 
 import {
+  ReceptionDetailPage,
+} from './features/receiving/ReceptionDetailPage'
+
+import {
   QuickReceivingPage,
 } from './features/receiving/QuickReceivingPage'
 
 import {
-  ReceptionDetailPage,
-} from './features/receiving/ReceptionDetailPage'
+  QuickReceivingHistoryPage,
+} from './features/receiving/QuickReceivingHistoryPage'
 
 import {
   InventoryPage,
@@ -109,19 +113,21 @@ function App() {
             />
           </Route>
 
-          {/* Recepción completa */}
           <Route
             path="/operations/receiving/new"
             element={<NewReceivingPage />}
           />
 
-          {/* Recepción rápida: debe estar antes de /:id */}
           <Route
             path="/operations/receiving/quick"
             element={<QuickReceivingPage />}
           />
 
-          {/* Detalle de recepción: siempre después de /new y /quick */}
+          <Route
+            path="/operations/receiving/quick/history"
+            element={<QuickReceivingHistoryPage />}
+          />
+
           <Route
             path="/operations/receiving/:id"
             element={<ReceptionDetailPage />}
@@ -224,10 +230,9 @@ function App() {
 }
 
 function LegacyReceptionRedirect() {
-  const id =
-    window.location.pathname
-      .split('/')
-      .filter(Boolean)[1]
+  const id = window.location.pathname
+    .split('/')
+    .filter(Boolean)[1]
 
   return (
     <Navigate
