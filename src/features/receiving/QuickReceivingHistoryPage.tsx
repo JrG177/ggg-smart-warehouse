@@ -9,8 +9,10 @@ import {
   LoaderCircle,
   RefreshCcw,
   Search,
+  Trash2,
 } from 'lucide-react'
 import {
+  deleteQuickReception,
   getQuickReceptionHistory,
   type QuickPhotoType,
   type QuickReceptionClient,
@@ -42,6 +44,7 @@ export function QuickReceivingHistoryPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   async function loadHistory() {
     setLoading(true)
@@ -57,6 +60,38 @@ export function QuickReceivingHistoryPage() {
       )
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function handleDelete(reception: QuickReceptionHistoryItem) {
+    const confirmed = window.confirm(
+      `¿Eliminar la recepción ${reception.reference_number}? Esta acción también eliminará sus fotografías y no se puede deshacer.`,
+    )
+
+    if (!confirmed || deletingId) return
+
+    setDeletingId(reception.id)
+    setError('')
+
+    try {
+      await deleteQuickReception(
+        reception.id,
+        reception.photos.map((photo) => photo.storage_path),
+      )
+      setReceptions((current) =>
+        current.filter((item) => item.id !== reception.id),
+      )
+      setExpandedId((current) =>
+        current === reception.id ? null : current,
+      )
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'No se pudo eliminar la recepción rápida.',
+      )
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -194,6 +229,24 @@ export function QuickReceivingHistoryPage() {
 
                 {expanded && (
                   <div className="border-t border-slate-800 p-4 sm:p-5">
+                    <div className="mb-4 flex justify-end">
+                      <button
+                        type="button"
+                        disabled={deletingId !== null}
+                        onClick={() => void handleDelete(reception)}
+                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-red-500/40 bg-red-500/10 px-4 text-sm font-semibold text-red-400 transition hover:bg-red-500 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {deletingId === reception.id ? (
+                          <LoaderCircle size={18} className="animate-spin" />
+                        ) : (
+                          <Trash2 size={18} />
+                        )}
+                        {deletingId === reception.id
+                          ? 'Eliminando…'
+                          : 'Eliminar recepción'}
+                      </button>
+                    </div>
+
                     {reception.observations && (
                       <div className="mb-4 rounded-xl border border-slate-800 bg-slate-950 p-4">
                         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">

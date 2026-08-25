@@ -201,3 +201,33 @@ export async function createQuickReception(
     throw error
   }
 }
+
+
+export async function deleteQuickReception(
+  receptionId: string,
+  storagePaths: string[],
+) {
+  const { error: deletionError } = await supabase
+    .from('quick_receptions')
+    .delete()
+    .eq('id', receptionId)
+
+  if (deletionError) {
+    throw new Error(
+      `No se pudo eliminar la recepción rápida: ${deletionError.message}`,
+    )
+  }
+
+  if (storagePaths.length > 0) {
+    const { error: storageError } = await supabase.storage
+      .from('quick-reception-evidence')
+      .remove(storagePaths)
+
+    if (storageError) {
+      console.error(
+        'La recepción se eliminó, pero no se pudieron limpiar todas sus fotos:',
+        storageError,
+      )
+    }
+  }
+}

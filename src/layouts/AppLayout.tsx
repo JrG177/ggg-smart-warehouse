@@ -200,11 +200,17 @@ export function AppLayout() {
     <div className="min-h-screen bg-slate-950 text-white">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-slate-800 bg-slate-900 lg:flex">
         <div className="flex h-32 items-center justify-center border-b border-slate-800 px-5 py-4">
-          <img
-            src="/ggg-logo.png"
-            alt="GGG"
-            className="max-h-24 w-auto max-w-full object-contain"
-          />
+          <NavLink
+            to="/operations/receiving"
+            aria-label="Ir al menú principal"
+            className="flex h-full w-full items-center justify-center rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          >
+            <img
+              src="/ggg-logo.png"
+              alt="GGG"
+              className="max-h-24 w-auto max-w-full object-contain"
+            />
+          </NavLink>
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col">
@@ -223,11 +229,17 @@ export function AppLayout() {
       </aside>
 
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-800 bg-slate-900/95 px-4 py-3 backdrop-blur lg:hidden">
-        <img
-          src="/ggg-logo.png"
-          alt="GGG"
-          className="h-14 w-auto object-contain"
-        />
+        <NavLink
+          to="/operations/receiving"
+          aria-label="Ir al menú principal"
+          className="rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        >
+          <img
+            src="/ggg-logo.png"
+            alt="GGG"
+            className="h-14 w-auto object-contain"
+          />
+        </NavLink>
 
         <button
           type="button"
@@ -272,11 +284,18 @@ export function AppLayout() {
         )}
       >
         <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
-          <img
-            src="/ggg-logo.png"
-            alt="GGG"
-            className="h-20 w-auto object-contain"
-          />
+          <NavLink
+            to="/operations/receiving"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="Ir al menú principal"
+            className="rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          >
+            <img
+              src="/ggg-logo.png"
+              alt="GGG"
+              className="h-20 w-auto object-contain"
+            />
+          </NavLink>
 
           <button
             type="button"
