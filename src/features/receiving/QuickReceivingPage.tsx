@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useMemo,
   useState,
 } from 'react'
@@ -15,6 +16,7 @@ import {
   Package,
   RotateCcw,
   Tag,
+  X,
 } from 'lucide-react'
 import {
   createQuickReception,
@@ -26,6 +28,12 @@ type PhotoRequirement = {
   type: QuickPhotoType
   label: string
   Icon: typeof FileText
+}
+
+type PhotoPreviewProps = {
+  file: File
+  disabled: boolean
+  onRemove: () => void
 }
 
 const requirements: Record<
@@ -52,12 +60,45 @@ const requirements: Record<
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024
 
+function PhotoPreview({ file, disabled, onRemove }: PhotoPreviewProps) {
+  const [previewUrl] = useState(() => URL.createObjectURL(file))
+
+  useEffect(
+    () => () => URL.revokeObjectURL(previewUrl),
+    [previewUrl],
+  )
+
+  return (
+    <div className="group relative overflow-hidden rounded-xl border border-slate-700 bg-slate-950">
+      <img
+        src={previewUrl}
+        alt={file.name}
+        className="aspect-square w-full object-cover"
+      />
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={onRemove}
+        className="absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full bg-slate-950/90 text-white shadow-lg transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+        aria-label={`Eliminar ${file.name}`}
+        title="Eliminar foto"
+      >
+        <X size={17} />
+      </button>
+      <p className="truncate px-2 py-2 text-xs text-slate-400">
+        {file.name}
+      </p>
+    </div>
+  )
+}
+
 export function QuickReceivingPage() {
   const navigate = useNavigate()
   const [client, setClient] =
     useState<QuickReceptionClient>('A1')
-  const [photos, setPhotos] =
-    useState<Partial<Record<QuickPhotoType, File>>>({})
+  const [photos, setPhotos] = useState<
+    Partial<Record<QuickPhotoType, File[]>>
+  >({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [successReference, setSuccessReference] = useState('')
@@ -68,8 +109,18 @@ export function QuickReceivingPage() {
   const completedCount = useMemo(
     () =>
       clientRequirements.filter(
-        (requirement) => Boolean(photos[requirement.type]),
+        (requirement) => (photos[requirement.type]?.length ?? 0) > 0,
       ).length,
+    [clientRequirements, photos],
+  )
+
+  const totalPhotoCount = useMemo(
+    () =>
+      clientRequirements.reduce(
+        (total, requirement) =>
+          total + (photos[requirement.type]?.length ?? 0),
+        0,
+      ),
     [clientRequirements, photos],
   )
 
@@ -82,7 +133,6 @@ export function QuickReceivingPage() {
     )
 
     setClient(nextClient)
-    if (nextClient !== 'UPS') setObservations('')
     setPhotos((current) =>
       Object.fromEntries(
         Object.entries(current).filter(([type]) =>
@@ -95,15 +145,16 @@ export function QuickReceivingPage() {
     setObservations('')
   }
 
-  function selectPhoto(type: QuickPhotoType, file?: File) {
-    if (!file) return
+  function selectPhotos(type: QuickPhotoType, selected?: FileList | null) {
+    const files = Array.from(selected ?? [])
+    if (files.length === 0) return
 
-    if (!file.type.startsWith('image/')) {
-      setError('Selecciona una imagen válida.')
+    if (files.some((file) => !file.type.startsWith('image/'))) {
+      setError('Selecciona únicamente imágenes válidas.')
       return
     }
 
-    if (file.size > MAX_FILE_SIZE) {
+    if (files.some((file) => file.size > MAX_FILE_SIZE)) {
       setError('Cada fotografía debe pesar menos de 15 MB.')
       return
     }
@@ -111,8 +162,27 @@ export function QuickReceivingPage() {
     setError('')
     setPhotos((current) => ({
       ...current,
-      [type]: file,
+      [type]: [...(current[type] ?? []), ...files],
     }))
+  }
+
+  function removePhoto(type: QuickPhotoType, index: number) {
+    setPhotos((current) => {
+      const nextFiles = (current[type] ?? []).filter(
+        (_, fileIndex) => fileIndex !== index,
+      )
+
+      if (nextFiles.length === 0) {
+        const next = { ...current }
+        delete next[type]
+        return next
+      }
+
+      return {
+        ...current,
+        [type]: nextFiles,
+      }
+    })
   }
 
   function resetForm() {
@@ -131,10 +201,12 @@ export function QuickReceivingPage() {
     try {
       const result = await createQuickReception(
         client,
-        clientRequirements.map((requirement) => ({
-          type: requirement.type,
-          file: photos[requirement.type] as File,
-        })),
+        clientRequirements.flatMap((requirement) =>
+          (photos[requirement.type] ?? []).map((file) => ({
+            type: requirement.type,
+            file,
+          })),
+        ),
         client === 'UPS' ? observations : undefined,
       )
 
@@ -163,7 +235,7 @@ export function QuickReceivingPage() {
           </h1>
 
           <p className="mt-2 text-sm text-slate-400">
-            Las fotografías de {client} se guardaron correctamente.
+            Las {totalPhotoCount} fotografías de {client} se guardaron correctamente.
           </p>
 
           <p className="mt-5 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 font-mono text-lg font-semibold text-emerald-400">
@@ -238,80 +310,101 @@ export function QuickReceivingPage() {
           <div>
             <h2 className="font-semibold text-white">Fotos obligatorias</h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Toma una foto clara de cada elemento.
+              Agrega una o más fotos claras de cada elemento.
             </p>
           </div>
 
-          <span className="rounded-full bg-slate-800 px-3 py-1.5 text-sm font-semibold text-slate-300">
-            {completedCount} de {clientRequirements.length}
-          </span>
+          <div className="text-right">
+            <span className="rounded-full bg-slate-800 px-3 py-1.5 text-sm font-semibold text-slate-300">
+              {completedCount} de {clientRequirements.length}
+            </span>
+            <p className="mt-2 text-xs text-slate-500">
+              {totalPhotoCount} {totalPhotoCount === 1 ? 'foto' : 'fotos'}
+            </p>
+          </div>
         </div>
 
         <div className="divide-y divide-slate-800">
           {clientRequirements.map(({ type, label, Icon }) => {
-            const file = photos[type]
+            const files = photos[type] ?? []
+            const hasPhotos = files.length > 0
 
             return (
-              <article
-                key={type}
-                className="grid grid-cols-[auto_1fr] items-center gap-3 p-4 sm:grid-cols-[auto_1fr_auto] sm:px-5"
-              >
-                <div className={[
-                  'flex h-11 w-11 items-center justify-center rounded-xl',
-                  file
-                    ? 'bg-emerald-500/15 text-emerald-400'
-                    : 'bg-slate-800 text-slate-400',
-                ].join(' ')}>
-                  {file ? <Check size={22} /> : <Icon size={22} />}
-                </div>
-
-                <div className="min-w-0">
-                  <h3 className="font-semibold text-white">
-                    {label} <span className="text-red-400">*</span>
-                  </h3>
-                  <p className={[
-                    'truncate text-xs',
-                    file ? 'text-emerald-400' : 'text-slate-500',
+              <article key={type} className="p-4 sm:px-5">
+                <div className="grid grid-cols-[auto_1fr] items-center gap-3 sm:grid-cols-[auto_1fr_auto]">
+                  <div className={[
+                    'flex h-11 w-11 items-center justify-center rounded-xl',
+                    hasPhotos
+                      ? 'bg-emerald-500/15 text-emerald-400'
+                      : 'bg-slate-800 text-slate-400',
                   ].join(' ')}>
-                    {file ? file.name : 'Pendiente'}
-                  </p>
+                    {hasPhotos ? <Check size={22} /> : <Icon size={22} />}
+                  </div>
+
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-white">
+                      {label} <span className="text-red-400">*</span>
+                    </h3>
+                    <p className={[
+                      'text-xs',
+                      hasPhotos ? 'text-emerald-400' : 'text-slate-500',
+                    ].join(' ')}>
+                      {hasPhotos
+                        ? `${files.length} ${files.length === 1 ? 'foto agregada' : 'fotos agregadas'}`
+                        : 'Agrega por lo menos una foto'}
+                    </p>
+                  </div>
+
+                  <div className="col-span-2 grid grid-cols-[1fr_auto] gap-2 sm:col-span-1 sm:flex">
+                    <label className="inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400">
+                      <Camera size={19} />
+                      Tomar otra foto
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        disabled={submitting}
+                        onChange={(event) => {
+                          selectPhotos(type, event.target.files)
+                          event.target.value = ''
+                        }}
+                        className="sr-only"
+                      />
+                    </label>
+
+                    <label
+                      className="inline-flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl border border-slate-700 text-slate-300 transition hover:bg-slate-800"
+                      title="Seleccionar varias desde el dispositivo"
+                      aria-label={`Subir fotos de ${label}`}
+                    >
+                      {hasPhotos ? <FileImage size={20} /> : <ImageUp size={20} />}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        disabled={submitting}
+                        onChange={(event) => {
+                          selectPhotos(type, event.target.files)
+                          event.target.value = ''
+                        }}
+                        className="sr-only"
+                      />
+                    </label>
+                  </div>
                 </div>
 
-                <div className="col-span-2 grid grid-cols-[1fr_auto] gap-2 sm:col-span-1 sm:flex">
-                  <label className="inline-flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400">
-                    <Camera size={19} />
-                    {file ? 'Repetir foto' : 'Tomar foto'}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      disabled={submitting}
-                      onChange={(event) => {
-                        selectPhoto(type, event.target.files?.[0])
-                        event.target.value = ''
-                      }}
-                      className="sr-only"
-                    />
-                  </label>
-
-                  <label
-                    className="inline-flex h-12 w-12 cursor-pointer items-center justify-center rounded-xl border border-slate-700 text-slate-300 transition hover:bg-slate-800"
-                    title="Seleccionar desde el dispositivo"
-                    aria-label={`Subir foto de ${label}`}
-                  >
-                    {file ? <FileImage size={20} /> : <ImageUp size={20} />}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      disabled={submitting}
-                      onChange={(event) => {
-                        selectPhoto(type, event.target.files?.[0])
-                        event.target.value = ''
-                      }}
-                      className="sr-only"
-                    />
-                  </label>
-                </div>
+                {hasPhotos && (
+                  <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+                    {files.map((file, index) => (
+                      <PhotoPreview
+                        key={`${file.name}-${file.lastModified}-${index}`}
+                        file={file}
+                        disabled={submitting}
+                        onRemove={() => removePhoto(type, index)}
+                      />
+                    ))}
+                  </div>
+                )}
               </article>
             )
           })}
@@ -358,12 +451,12 @@ export function QuickReceivingPage() {
           {submitting ? (
             <>
               <LoaderCircle size={21} className="animate-spin" />
-              Guardando fotografías…
+              Guardando {totalPhotoCount} fotografías…
             </>
           ) : (
             <>
               <Check size={21} />
-              Completar recepción
+              Completar recepción ({totalPhotoCount})
             </>
           )}
         </button>
