@@ -27,6 +27,8 @@ export type QuickReceptionProgressCallback = (
 const MAX_IMAGE_DIMENSION = 2400
 const JPEG_QUALITY = 0.82
 const PHOTO_BATCH_SIZE = 3
+const UPLOAD_MAX_ATTEMPTS = 3
+const UPLOAD_RETRY_BASE_DELAY_MS = 750
 
 export type QuickReceptionResult = {
   id: string
@@ -197,6 +199,109 @@ async function optimizePhoto(file: File) {
   }
 }
 
+type UploadErrorDetails = {
+  message?: string
+  status?: number
+  statusCode?: number | string
+}
+
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, milliseconds)
+  })
+}
+
+function getUploadStatus(error: unknown) {
+  if (!error || typeof error !== 'object') return null
+
+  const details = error as UploadErrorDetails
+  const status = Number(details.status ?? details.statusCode)
+
+  return Number.isFinite(status) ? status : null
+}
+
+function isAlreadyUploaded(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+
+  const message = ((error as UploadErrorDetails).message || '')
+    .toLowerCase()
+
+  return (
+    message.includes('already exists') ||
+    message.includes('duplicate')
+  )
+}
+
+function isRetryableUploadError(error: unknown) {
+  const status = getUploadStatus(error)
+
+  return (
+    status === null ||
+    status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status >= 500
+  )
+}
+
+async function uploadPhotoWithRetry(
+  storagePath: string,
+  file: File,
+  type: QuickPhotoType,
+) {
+  let lastError: unknown
+  let attemptsUsed = 0
+
+  for (
+    let attempt = 1;
+    attempt <= UPLOAD_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    attemptsUsed = attempt
+
+    const { error: uploadError } = await supabase.storage
+      .from('quick-reception-evidence')
+      .upload(storagePath, file, {
+        cacheControl: '3600',
+        contentType: file.type || 'image/jpeg',
+        upsert: false,
+      })
+
+    if (!uploadError || isAlreadyUploaded(uploadError)) {
+      return
+    }
+
+    lastError = uploadError
+
+    if (
+      attempt === UPLOAD_MAX_ATTEMPTS ||
+      !isRetryableUploadError(uploadError)
+    ) {
+      break
+    }
+
+    await wait(
+      UPLOAD_RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+    )
+  }
+
+  const errorMessage =
+    lastError &&
+    typeof lastError === 'object' &&
+    'message' in lastError
+      ? String(lastError.message)
+      : 'error de conexión'
+
+  const attemptsMessage =
+    attemptsUsed > 1
+      ? ` después de ${attemptsUsed} intentos`
+      : ''
+
+  throw new Error(
+    `No se pudo subir la foto de ${type}${attemptsMessage}: ${errorMessage}`,
+  )
+}
+
 export async function createQuickReception(
   client: QuickReceptionClient,
   photos: QuickReceptionPhotoInput[],
@@ -271,19 +376,11 @@ export async function createQuickReception(
             photo.file,
           )
 
-          const { error: uploadError } = await supabase.storage
-            .from('quick-reception-evidence')
-            .upload(storagePath, photo.file, {
-              cacheControl: '3600',
-              contentType: photo.file.type || 'image/jpeg',
-              upsert: false,
-            })
-
-          if (uploadError) {
-            throw new Error(
-              `No se pudo subir la foto de ${photo.type}: ${uploadError.message}`,
-            )
-          }
+          await uploadPhotoWithRetry(
+            storagePath,
+            photo.file,
+            photo.type,
+          )
 
           return {
             quick_reception_id: reception.id,
