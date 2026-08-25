@@ -14,6 +14,20 @@ export type QuickReceptionPhotoInput = {
   file: File
 }
 
+export type QuickReceptionProgress = {
+  phase: 'optimizing' | 'uploading' | 'saving'
+  completed: number
+  total: number
+}
+
+export type QuickReceptionProgressCallback = (
+  progress: QuickReceptionProgress,
+) => void
+
+const MAX_IMAGE_DIMENSION = 2400
+const JPEG_QUALITY = 0.82
+const PHOTO_BATCH_SIZE = 3
+
 export type QuickReceptionResult = {
   id: string
   reference_number: string
@@ -112,11 +126,107 @@ function buildStoragePath(
   return `${receptionId}/${type}/${uniquePart}.${getExtension(file)}`
 }
 
+function loadImage(file: File) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image()
+    const objectUrl = URL.createObjectURL(file)
+
+    image.onload = () => {
+      URL.revokeObjectURL(objectUrl)
+      resolve(image)
+    }
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('No se pudo preparar la imagen'))
+    }
+
+    image.src = objectUrl
+  })
+}
+
+function canvasToJpeg(canvas: HTMLCanvasElement) {
+  return new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY)
+  })
+}
+
+function getJpegFileName(fileName: string) {
+  const baseName = fileName.replace(/\.[^/.]+$/, '') || 'photo'
+  return `${baseName}.jpg`
+}
+
+async function optimizePhoto(file: File) {
+  if (
+    !file.type.startsWith('image/') ||
+    file.type === 'image/gif' ||
+    file.type === 'image/svg+xml'
+  ) {
+    return file
+  }
+
+  try {
+    const image = await loadImage(file)
+    const longestSide = Math.max(image.naturalWidth, image.naturalHeight)
+    const scale = Math.min(1, MAX_IMAGE_DIMENSION / longestSide)
+    const width = Math.max(1, Math.round(image.naturalWidth * scale))
+    const height = Math.max(1, Math.round(image.naturalHeight * scale))
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+
+    if (!context) return file
+
+    canvas.width = width
+    canvas.height = height
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, width, height)
+    context.drawImage(image, 0, 0, width, height)
+
+    const optimizedBlob = await canvasToJpeg(canvas)
+
+    if (!optimizedBlob || optimizedBlob.size >= file.size) {
+      return file
+    }
+
+    return new File([optimizedBlob], getJpegFileName(file.name), {
+      type: 'image/jpeg',
+      lastModified: file.lastModified,
+    })
+  } catch {
+    return file
+  }
+}
+
 export async function createQuickReception(
   client: QuickReceptionClient,
   photos: QuickReceptionPhotoInput[],
   observations?: string,
+  onProgress?: QuickReceptionProgressCallback,
 ) {
+  const total = photos.length
+  let optimizedCompleted = 0
+  const optimizedPhotos: QuickReceptionPhotoInput[] = []
+
+  onProgress?.({ phase: 'optimizing', completed: 0, total })
+
+  for (let index = 0; index < photos.length; index += PHOTO_BATCH_SIZE) {
+    const batch = photos.slice(index, index + PHOTO_BATCH_SIZE)
+    const optimizedBatch = await Promise.all(
+      batch.map(async (photo) => {
+        const file = await optimizePhoto(photo.file)
+        optimizedCompleted += 1
+        onProgress?.({
+          phase: 'optimizing',
+          completed: optimizedCompleted,
+          total,
+        })
+        return { ...photo, file }
+      }),
+    )
+
+    optimizedPhotos.push(...optimizedBatch)
+  }
+
   const { data: reception, error: receptionError } = await supabase
     .from('quick_receptions')
     .insert({
@@ -134,44 +244,87 @@ export async function createQuickReception(
   }
 
   const uploadedPaths: string[] = []
+  const photoRows: Array<{
+    quick_reception_id: string
+    photo_type: QuickPhotoType
+    storage_path: string
+  }> = []
+  let uploadedCompleted = 0
+
+  onProgress?.({ phase: 'uploading', completed: 0, total })
 
   try {
-    for (const photo of photos) {
-      const storagePath = buildStoragePath(
-        reception.id,
-        photo.type,
-        photo.file,
+    for (
+      let index = 0;
+      index < optimizedPhotos.length;
+      index += PHOTO_BATCH_SIZE
+    ) {
+      const batch = optimizedPhotos.slice(
+        index,
+        index + PHOTO_BATCH_SIZE,
+      )
+      const uploadResults = await Promise.allSettled(
+        batch.map(async (photo) => {
+          const storagePath = buildStoragePath(
+            reception.id,
+            photo.type,
+            photo.file,
+          )
+
+          const { error: uploadError } = await supabase.storage
+            .from('quick-reception-evidence')
+            .upload(storagePath, photo.file, {
+              cacheControl: '3600',
+              contentType: photo.file.type || 'image/jpeg',
+              upsert: false,
+            })
+
+          if (uploadError) {
+            throw new Error(
+              `No se pudo subir la foto de ${photo.type}: ${uploadError.message}`,
+            )
+          }
+
+          return {
+            quick_reception_id: reception.id,
+            photo_type: photo.type,
+            storage_path: storagePath,
+          }
+        }),
       )
 
-      const { error: uploadError } = await supabase.storage
-        .from('quick-reception-evidence')
-        .upload(storagePath, photo.file, {
-          cacheControl: '3600',
-          contentType: photo.file.type || 'image/jpeg',
-          upsert: false,
-        })
-
-      if (uploadError) {
-        throw new Error(
-          `No se pudo subir la foto de ${photo.type}: ${uploadError.message}`,
-        )
+      for (const result of uploadResults) {
+        if (result.status === 'fulfilled') {
+          uploadedPaths.push(result.value.storage_path)
+          photoRows.push(result.value)
+          uploadedCompleted += 1
+          onProgress?.({
+            phase: 'uploading',
+            completed: uploadedCompleted,
+            total,
+          })
+        }
       }
 
-      uploadedPaths.push(storagePath)
+      const failedUpload = uploadResults.find(
+        (result) => result.status === 'rejected',
+      )
 
-      const { error: photoError } = await supabase
-        .from('quick_reception_photos')
-        .insert({
-          quick_reception_id: reception.id,
-          photo_type: photo.type,
-          storage_path: storagePath,
-        })
-
-      if (photoError) {
-        throw new Error(
-          `No se pudo guardar la evidencia de ${photo.type}: ${photoError.message}`,
-        )
+      if (failedUpload?.status === 'rejected') {
+        throw failedUpload.reason
       }
+    }
+
+    onProgress?.({ phase: 'saving', completed: total, total })
+
+    const { error: photoError } = await supabase
+      .from('quick_reception_photos')
+      .insert(photoRows)
+
+    if (photoError) {
+      throw new Error(
+        `No se pudo guardar la evidencia: ${photoError.message}`,
+      )
     }
 
     const { error: completionError } = await supabase
@@ -201,7 +354,6 @@ export async function createQuickReception(
     throw error
   }
 }
-
 
 export async function deleteQuickReception(
   receptionId: string,

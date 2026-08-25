@@ -22,6 +22,7 @@ import {
   createQuickReception,
   type QuickPhotoType,
   type QuickReceptionClient,
+  type QuickReceptionProgress,
 } from '../../services/quickReceivingService'
 
 type PhotoRequirement = {
@@ -59,6 +60,42 @@ const requirements: Record<
 }
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024
+
+function getProgressLabel(
+  progress: QuickReceptionProgress | null,
+  totalPhotoCount: number,
+) {
+  if (!progress) {
+    return `Guardando ${totalPhotoCount} fotografías…`
+  }
+
+  if (progress.phase === 'optimizing') {
+    return `Optimizando ${progress.completed} de ${progress.total}…`
+  }
+
+  if (progress.phase === 'uploading') {
+    return `Subiendo ${progress.completed} de ${progress.total}…`
+  }
+
+  return 'Finalizando recepción…'
+}
+
+function getProgressPercent(progress: QuickReceptionProgress | null) {
+  if (!progress || progress.total === 0) return 0
+
+  const totalSteps = progress.total * 2 + 1
+  const completedSteps =
+    progress.phase === 'optimizing'
+      ? progress.completed
+      : progress.phase === 'uploading'
+        ? progress.total + progress.completed
+        : totalSteps
+
+  return Math.min(
+    100,
+    Math.round((completedSteps / totalSteps) * 100),
+  )
+}
 
 function PhotoPreview({ file, disabled, onRemove }: PhotoPreviewProps) {
   const [previewUrl] = useState(() => URL.createObjectURL(file))
@@ -100,6 +137,8 @@ export function QuickReceivingPage() {
     Partial<Record<QuickPhotoType, File[]>>
   >({})
   const [submitting, setSubmitting] = useState(false)
+  const [progress, setProgress] =
+    useState<QuickReceptionProgress | null>(null)
   const [error, setError] = useState('')
   const [successReference, setSuccessReference] = useState('')
   const [observations, setObservations] = useState('')
@@ -126,6 +165,7 @@ export function QuickReceivingPage() {
 
   const isComplete =
     completedCount === clientRequirements.length
+  const progressPercent = getProgressPercent(progress)
 
   function changeClient(nextClient: QuickReceptionClient) {
     const allowed = new Set(
@@ -197,6 +237,11 @@ export function QuickReceivingPage() {
 
     setSubmitting(true)
     setError('')
+    setProgress({
+      phase: 'optimizing',
+      completed: 0,
+      total: totalPhotoCount,
+    })
 
     try {
       const result = await createQuickReception(
@@ -208,6 +253,7 @@ export function QuickReceivingPage() {
           })),
         ),
         client === 'UPS' ? observations : undefined,
+        (nextProgress) => setProgress(nextProgress),
       )
 
       setSuccessReference(result.reference_number)
@@ -219,6 +265,7 @@ export function QuickReceivingPage() {
       )
     } finally {
       setSubmitting(false)
+      setProgress(null)
     }
   }
 
@@ -442,6 +489,23 @@ export function QuickReceivingPage() {
       )}
 
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-slate-800 bg-slate-900/95 p-4 backdrop-blur lg:static lg:mt-5 lg:border-0 lg:bg-transparent lg:p-0">
+        {submitting && (
+          <div className="mx-auto mb-3 max-w-3xl">
+            <div className="mb-1.5 flex items-center justify-between gap-3 text-xs font-semibold text-slate-300">
+              <span>
+                {getProgressLabel(progress, totalPhotoCount)}
+              </span>
+              <span>{progressPercent}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-slate-700">
+              <div
+                className="h-full rounded-full bg-emerald-400 transition-[width] duration-300"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         <button
           type="button"
           disabled={!isComplete || submitting}
@@ -451,7 +515,7 @@ export function QuickReceivingPage() {
           {submitting ? (
             <>
               <LoaderCircle size={21} className="animate-spin" />
-              Guardando {totalPhotoCount} fotografías…
+              {getProgressLabel(progress, totalPhotoCount)}
             </>
           ) : (
             <>
