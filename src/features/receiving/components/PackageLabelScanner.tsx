@@ -13,6 +13,7 @@ import {
   Barcode,
   Check,
   LoaderCircle,
+  RotateCcw,
   ScanBarcode,
   X,
 } from 'lucide-react'
@@ -24,6 +25,7 @@ type PackageLabelScannerProps = {
 }
 
 type ScanField = 'P' | 'K' | 'Q' | 'V' | '3S' | '4S'
+type ScanTarget = 'P' | 'K' | 'Q' | 'V' | 'PACKAGE'
 
 type PackageDraft = {
   partNumber: string
@@ -52,6 +54,38 @@ const fieldLabels: Record<ScanField, string> = {
   V: 'código de proveedor',
   '3S': 'ID de paquete',
   '4S': 'ID maestro',
+}
+
+const scanTargets: Array<{ target: ScanTarget; label: string }> = [
+  { target: 'P', label: 'P · Parte' },
+  { target: 'K', label: 'K · Orden' },
+  { target: 'Q', label: 'Q · Cantidad' },
+  { target: 'V', label: 'V · Proveedor' },
+  { target: 'PACKAGE', label: '3S/4S · Paquete' },
+]
+
+function targetMatchesField(target: ScanTarget, field: ScanField) {
+  return target === 'PACKAGE'
+    ? field === '3S' || field === '4S'
+    : target === field
+}
+
+function targetIsCaptured(draft: PackageDraft, target: ScanTarget) {
+  if (target === 'PACKAGE') return Boolean(draft.supplierPackageId)
+  if (target === 'P') return Boolean(draft.partNumber)
+  if (target === 'K') return Boolean(draft.purchaseOrder)
+  if (target === 'Q') return Boolean(draft.quantity)
+  return Boolean(draft.supplierCode)
+}
+
+function getNextTarget(draft: PackageDraft, current: ScanTarget) {
+  const currentIndex = scanTargets.findIndex(({ target }) => target === current)
+  const ordered = [
+    ...scanTargets.slice(currentIndex + 1),
+    ...scanTargets.slice(0, currentIndex + 1),
+  ]
+
+  return ordered.find(({ target }) => !targetIsCaptured(draft, target))?.target
 }
 
 function cleanRawCode(value: string) {
@@ -134,7 +168,9 @@ export function PackageLabelScanner({
   const lastScanRef = useRef({ value: '', time: 0 })
   const [draft, setDraft] = useState<PackageDraft>(EMPTY_DRAFT)
   const [cameraStatus, setCameraStatus] = useState<'starting' | 'ready' | 'error'>('starting')
-  const [message, setMessage] = useState('Apunta a cualquiera de los códigos de la label.')
+  const [scanTarget, setScanTarget] = useState<ScanTarget>('P')
+  const scanTargetRef = useRef<ScanTarget>('P')
+  const [message, setMessage] = useState('Seleccionado P: apunta solamente al código del número de parte.')
   const [messageType, setMessageType] = useState<'neutral' | 'success' | 'error'>('neutral')
 
   const updateDraft = useCallback((next: PackageDraft) => {
@@ -157,18 +193,27 @@ export function PackageLabelScanner({
 
     try {
       const { field, rawCode, value } = parseLabelCode(rawValue)
-      const currentRaw = draftRef.current.rawCodes[field]
 
-      if (currentRaw && currentRaw !== rawCode) {
-        setMessage(
-          `Ya existe otro ${fieldLabels[field]} en este paquete. Guarda este paquete antes de escanear otra label.`,
-        )
-        setMessageType('error')
+      if (!targetMatchesField(scanTargetRef.current, field)) {
+        const expected = scanTargetRef.current === 'PACKAGE'
+          ? '3S o 4S'
+          : scanTargetRef.current
+        setMessage(`Buscando ${expected}. El código ${field} se ignoró para no mezclar datos.`)
+        setMessageType('neutral')
         return
       }
 
-      updateDraft(applyScan(draftRef.current, field, rawCode, value))
-      setMessage(`${fieldLabels[field]} capturado: ${value}`)
+      const nextDraft = applyScan(draftRef.current, field, rawCode, value)
+      updateDraft(nextDraft)
+      const nextTarget = getNextTarget(nextDraft, scanTargetRef.current)
+
+      if (nextTarget) {
+        scanTargetRef.current = nextTarget
+        setScanTarget(nextTarget)
+        setMessage(`${fieldLabels[field]} capturado: ${value}. Continúa con ${nextTarget === 'PACKAGE' ? '3S/4S' : nextTarget}.`)
+      } else {
+        setMessage(`${fieldLabels[field]} capturado: ${value}. Label completa; revisa y agrega el paquete.`)
+      }
       setMessageType('success')
       navigator.vibrate?.(120)
     } catch (error) {
@@ -240,6 +285,20 @@ export function PackageLabelScanner({
     value: PackageDraft[Key],
   ) {
     updateDraft({ ...draftRef.current, [key]: value })
+  }
+
+  function selectScanTarget(target: ScanTarget) {
+    scanTargetRef.current = target
+    setScanTarget(target)
+    setMessage(`Seleccionado ${target === 'PACKAGE' ? '3S/4S' : target}. Apunta solamente a ese código.`)
+    setMessageType('neutral')
+    lastScanRef.current = { value: '', time: 0 }
+  }
+
+  function clearLabel() {
+    updateDraft({ ...EMPTY_DRAFT, rawCodes: {} })
+    selectScanTarget('P')
+    setMessage('Nueva label lista. Comienza escaneando el código P.')
   }
 
   function savePackage() {
@@ -327,13 +386,54 @@ export function PackageLabelScanner({
             {message}
           </div>
 
+          <div className="mt-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-semibold text-slate-300">
+                ¿Qué código vas a escanear?
+              </p>
+              <button
+                type="button"
+                onClick={clearLabel}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-slate-700 px-3 text-xs font-semibold text-slate-300"
+              >
+                <RotateCcw size={15} />
+                Nueva label
+              </button>
+            </div>
+
+            <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {scanTargets.map(({ target, label }) => {
+                const active = scanTarget === target
+                const captured = targetIsCaptured(draft, target)
+
+                return (
+                  <button
+                    key={target}
+                    type="button"
+                    onClick={() => selectScanTarget(target)}
+                    className={[
+                      'min-h-11 rounded-xl border px-2 text-xs font-bold transition',
+                      active
+                        ? 'border-emerald-400 bg-emerald-500 text-slate-950'
+                        : captured
+                          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+                          : 'border-slate-700 bg-slate-950 text-slate-400',
+                    ].join(' ')}
+                  >
+                    {captured && !active ? '✓ ' : ''}{label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="text-sm font-semibold text-slate-300">
               Número de parte (P) <span className="text-red-400">*</span>
               <input
                 value={draft.partNumber}
                 onChange={(event) => setField('partNumber', event.target.value)}
-                placeholder="617-1983"
+                placeholder="Sin capturar"
                 className={inputClass}
               />
             </label>
@@ -343,7 +443,7 @@ export function PackageLabelScanner({
               <input
                 value={draft.purchaseOrder}
                 onChange={(event) => setField('purchaseOrder', event.target.value)}
-                placeholder="5500126043"
+                placeholder="Sin capturar"
                 className={inputClass}
               />
             </label>
@@ -354,7 +454,7 @@ export function PackageLabelScanner({
                 value={draft.quantity}
                 onChange={(event) => setField('quantity', event.target.value.replace(/\D/g, ''))}
                 inputMode="numeric"
-                placeholder="1"
+                placeholder="Sin capturar"
                 className={inputClass}
               />
             </label>
@@ -364,7 +464,7 @@ export function PackageLabelScanner({
               <input
                 value={draft.supplierCode}
                 onChange={(event) => setField('supplierCode', event.target.value)}
-                placeholder="P0703R1"
+                placeholder="Sin capturar"
                 className={inputClass}
               />
             </label>
@@ -390,7 +490,7 @@ export function PackageLabelScanner({
               <input
                 value={draft.supplierPackageId}
                 onChange={(event) => setField('supplierPackageId', event.target.value)}
-                placeholder="514117174151"
+                placeholder="Sin capturar"
                 className={inputClass}
               />
             </label>
@@ -416,7 +516,7 @@ export function PackageLabelScanner({
 
           <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-slate-500">
             <Barcode className="mt-0.5 shrink-0" size={16} />
-            Escanea los códigos de una sola label. Puedes capturarlos en cualquier orden y corregir los campos manualmente.
+            La cámara puede ver varios códigos a la vez. La app guardará únicamente el tipo seleccionado para evitar mezclar labels. Puedes corregir cualquier campo manualmente.
           </p>
         </div>
       </div>
