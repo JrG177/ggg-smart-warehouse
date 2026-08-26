@@ -4,8 +4,10 @@ import {
   useState,
 } from 'react'
 import { useNavigate } from 'react-router-dom'
+import QRCode from 'qrcode'
 import {
   ArrowLeft,
+  Barcode,
   Boxes,
   Camera,
   Check,
@@ -14,16 +16,23 @@ import {
   ImageUp,
   LoaderCircle,
   Package,
+  Printer,
   RotateCcw,
+  ScanBarcode,
   Tag,
+  Trash2,
   X,
 } from 'lucide-react'
 import {
   createQuickReception,
   type QuickPhotoType,
   type QuickReceptionClient,
+  type QuickReceptionPackageInput,
   type QuickReceptionProgress,
+  type WarehousePackage,
 } from '../../services/quickReceivingService'
+import { PackageLabelScanner } from './components/PackageLabelScanner'
+import './warehouseQrPrint.css'
 
 type PhotoRequirement = {
   type: QuickPhotoType
@@ -35,6 +44,14 @@ type PhotoPreviewProps = {
   file: File
   disabled: boolean
   onRemove: () => void
+}
+
+type CapturedPackage = QuickReceptionPackageInput & {
+  localId: string
+}
+
+type WarehouseQrLabelProps = {
+  item: WarehousePackage
 }
 
 const requirements: Record<
@@ -60,6 +77,61 @@ const requirements: Record<
 }
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024
+
+function WarehouseQrLabel({ item }: WarehouseQrLabelProps) {
+  const [qrUrl, setQrUrl] = useState('')
+
+  useEffect(() => {
+    let active = true
+
+    void QRCode.toDataURL(`GGGPKG:${item.tracking_code}`, {
+      errorCorrectionLevel: 'M',
+      margin: 1,
+      width: 320,
+    }).then((url) => {
+      if (active) setQrUrl(url)
+    })
+
+    return () => {
+      active = false
+    }
+  }, [item.tracking_code])
+
+  return (
+    <article className="warehouse-qr-label break-inside-avoid rounded-xl border-2 border-slate-900 bg-white p-3 text-slate-950">
+      <div className="flex items-start gap-3">
+        <div className="flex h-32 w-32 shrink-0 items-center justify-center bg-white">
+          {qrUrl ? (
+            <img
+              src={qrUrl}
+              alt={`QR ${item.tracking_code}`}
+              className="h-32 w-32"
+            />
+          ) : (
+            <LoaderCircle className="animate-spin text-slate-500" size={24} />
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-bold uppercase tracking-wider">GGG · Paquete</p>
+          <p className="mt-1 font-mono text-lg font-black">{item.tracking_code}</p>
+          <dl className="mt-2 space-y-1 text-xs">
+            <div><dt className="inline font-bold">Parte: </dt><dd className="inline">{item.part_number}</dd></div>
+            {item.quantity !== null && (
+              <div><dt className="inline font-bold">Cantidad: </dt><dd className="inline">{item.quantity}</dd></div>
+            )}
+            {item.purchase_order && (
+              <div><dt className="inline font-bold">PO: </dt><dd className="inline">{item.purchase_order}</dd></div>
+            )}
+            {item.supplier_package_id && (
+              <div><dt className="inline font-bold">Paquete proveedor: </dt><dd className="inline">{item.supplier_package_type || ''}{item.supplier_package_id}</dd></div>
+            )}
+          </dl>
+        </div>
+      </div>
+    </article>
+  )
+}
 
 function getProgressLabel(
   progress: QuickReceptionProgress | null,
@@ -142,6 +214,9 @@ export function QuickReceivingPage() {
   const [error, setError] = useState('')
   const [successReference, setSuccessReference] = useState('')
   const [observations, setObservations] = useState('')
+  const [packages, setPackages] = useState<CapturedPackage[]>([])
+  const [savedPackages, setSavedPackages] = useState<WarehousePackage[]>([])
+  const [scannerOpen, setScannerOpen] = useState(false)
 
   const clientRequirements = requirements[client]
 
@@ -183,6 +258,9 @@ export function QuickReceivingPage() {
     setError('')
     setSuccessReference('')
     setObservations('')
+    setPackages([])
+    setSavedPackages([])
+    setScannerOpen(false)
   }
 
   function selectPhotos(type: QuickPhotoType, selected?: FileList | null) {
@@ -228,8 +306,51 @@ export function QuickReceivingPage() {
   function resetForm() {
     setPhotos({})
     setObservations('')
+    setPackages([])
+    setSavedPackages([])
+    setScannerOpen(false)
     setError('')
     setSuccessReference('')
+  }
+
+  function addPackage(item: QuickReceptionPackageInput) {
+    const duplicate = packages.some((current) => {
+      if (
+        item.supplierPackageId &&
+        current.supplierPackageId
+      ) {
+        return (
+          current.supplierPackageId === item.supplierPackageId &&
+          current.supplierPackageType === item.supplierPackageType
+        )
+      }
+
+      return (
+        current.partNumber === item.partNumber &&
+        current.purchaseOrder === item.purchaseOrder &&
+        current.quantity === item.quantity
+      )
+    })
+
+    if (duplicate) {
+      setError('Ese paquete ya fue agregado a esta recepción.')
+      return
+    }
+
+    setError('')
+    setPackages((current) => [
+      ...current,
+      {
+        ...item,
+        localId: crypto.randomUUID(),
+      },
+    ])
+  }
+
+  function removePackage(localId: string) {
+    setPackages((current) =>
+      current.filter((item) => item.localId !== localId),
+    )
   }
 
   async function completeReception() {
@@ -254,8 +375,18 @@ export function QuickReceivingPage() {
         ),
         client === 'UPS' ? observations : undefined,
         (nextProgress) => setProgress(nextProgress),
+        packages.map((item) => ({
+          partNumber: item.partNumber,
+          purchaseOrder: item.purchaseOrder,
+          quantity: item.quantity,
+          supplierCode: item.supplierCode,
+          supplierPackageId: item.supplierPackageId,
+          supplierPackageType: item.supplierPackageType,
+          rawCodes: item.rawCodes,
+        })),
       )
 
+      setSavedPackages(result.packages)
       setSuccessReference(result.reference_number)
     } catch (caughtError) {
       setError(
@@ -271,7 +402,7 @@ export function QuickReceivingPage() {
 
   if (successReference) {
     return (
-      <div className="mx-auto flex min-h-[70vh] max-w-xl items-center justify-center">
+      <div className="mx-auto flex min-h-[70vh] max-w-4xl items-center justify-center">
         <section className="w-full rounded-3xl border border-emerald-500/30 bg-slate-900 p-6 text-center shadow-xl sm:p-10">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500 text-slate-950">
             <Check size={34} />
@@ -283,13 +414,19 @@ export function QuickReceivingPage() {
 
           <p className="mt-2 text-sm text-slate-400">
             Las {totalPhotoCount} fotografías de {client} se guardaron correctamente.
+            {savedPackages.length > 0 && (
+              <> También se registraron {savedPackages.length} {savedPackages.length === 1 ? 'paquete' : 'paquetes'}.</>
+            )}
           </p>
 
           <p className="mt-5 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3 font-mono text-lg font-semibold text-emerald-400">
             {successReference}
           </p>
 
-          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <div className={[
+            'mt-6 grid gap-3',
+            savedPackages.length > 0 ? 'sm:grid-cols-3' : 'sm:grid-cols-2',
+          ].join(' ')}>
             <button
               type="button"
               onClick={resetForm}
@@ -306,7 +443,32 @@ export function QuickReceivingPage() {
             >
               Ver historial rápido
             </button>
+
+            {savedPackages.length > 0 && (
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl border border-slate-700 px-5 font-semibold text-slate-300 transition hover:bg-slate-800"
+              >
+                <Printer size={19} />
+                Imprimir QR
+              </button>
+            )}
           </div>
+
+          {savedPackages.length > 0 && (
+            <div className="mt-8 border-t border-slate-800 pt-6 text-left">
+              <div className="mb-4 flex items-center gap-2 text-slate-300">
+                <Barcode size={20} className="text-emerald-400" />
+                <h2 className="font-bold">Etiquetas internas de GGG</h2>
+              </div>
+              <div className="warehouse-qr-print grid gap-3 sm:grid-cols-2">
+                {savedPackages.map((item) => (
+                  <WarehouseQrLabel key={item.id} item={item} />
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       </div>
     )
@@ -314,6 +476,13 @@ export function QuickReceivingPage() {
 
   return (
     <div className="mx-auto max-w-3xl pb-28 sm:pb-8">
+      {scannerOpen && (
+        <PackageLabelScanner
+          onClose={() => setScannerOpen(false)}
+          onSave={addPackage}
+        />
+      )}
+
       <header className="mb-5 flex items-center gap-3">
         <button
           type="button"
@@ -351,6 +520,71 @@ export function QuickReceivingPage() {
             <option value="A1">A1</option>
             <option value="UPS">UPS</option>
           </select>
+        </div>
+
+        <div className="border-b border-slate-800 p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <ScanBarcode size={20} className="text-emerald-400" />
+                <h2 className="font-semibold text-white">Paquetes rastreables</h2>
+                <span className="rounded-full bg-amber-500/15 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-300">
+                  Piloto
+                </span>
+              </div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                Escanea los códigos P, K, Q, V y 3S/4S de cada label. Por ahora es opcional.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => setScannerOpen(true)}
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 text-sm font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-60"
+            >
+              <ScanBarcode size={20} />
+              Nuevo paquete
+            </button>
+          </div>
+
+          {packages.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {packages.map((item, index) => (
+                <article
+                  key={item.localId}
+                  className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-xl border border-slate-700 bg-slate-950 p-3"
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/15 font-bold text-emerald-400">
+                    {index + 1}
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="truncate font-mono font-bold text-white">
+                      {item.partNumber}
+                    </p>
+                    <p className="mt-1 truncate text-xs text-slate-400">
+                      {item.quantity !== null ? `Cantidad ${item.quantity}` : 'Cantidad pendiente'}
+                      {item.purchaseOrder ? ` · PO ${item.purchaseOrder}` : ''}
+                      {item.supplierPackageId
+                        ? ` · ${item.supplierPackageType || ''}${item.supplierPackageId}`
+                        : ''}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => removePackage(item.localId)}
+                    className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
+                    aria-label={`Eliminar paquete ${item.partNumber}`}
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-between border-b border-slate-800 px-4 py-4 sm:px-5">

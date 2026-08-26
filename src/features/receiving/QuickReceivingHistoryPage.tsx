@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
+  Barcode,
   CalendarDays,
   ChevronDown,
   ChevronUp,
@@ -65,7 +66,7 @@ export function QuickReceivingHistoryPage() {
 
   async function handleDelete(reception: QuickReceptionHistoryItem) {
     const confirmed = window.confirm(
-      `¿Eliminar la recepción ${reception.reference_number}? Esta acción también eliminará sus fotografías y no se puede deshacer.`,
+      `¿Eliminar la recepción ${reception.reference_number}? Esta acción también eliminará sus fotografías y paquetes rastreables; no se puede deshacer.`,
     )
 
     if (!confirmed || deletingId) return
@@ -107,7 +108,18 @@ export function QuickReceivingHistoryPage() {
       const matchesSearch =
         !normalizedSearch ||
         reception.reference_number.toLowerCase().includes(normalizedSearch) ||
-        reception.observations?.toLowerCase().includes(normalizedSearch)
+        reception.observations?.toLowerCase().includes(normalizedSearch) ||
+        reception.packages.some((item) =>
+          [
+            item.tracking_code,
+            item.part_number,
+            item.purchase_order,
+            item.supplier_code,
+            item.supplier_package_id,
+          ].some((value) =>
+            value?.toLowerCase().includes(normalizedSearch),
+          ),
+        )
 
       return matchesClient && Boolean(matchesSearch)
     })
@@ -153,7 +165,7 @@ export function QuickReceivingHistoryPage() {
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar referencia u observación"
+            placeholder="Buscar referencia, parte, PO o paquete"
             className="min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 pl-10 pr-4 text-white outline-none transition placeholder:text-slate-600 focus:border-emerald-500"
           />
         </label>
@@ -218,6 +230,7 @@ export function QuickReceivingHistoryPage() {
 
                   <span className="text-sm font-semibold text-slate-400">
                     {reception.photos.length} fotos
+                    {reception.packages.length > 0 && ` · ${reception.packages.length} paquetes`}
                   </span>
 
                   {expanded ? (
@@ -255,6 +268,41 @@ export function QuickReceivingHistoryPage() {
                         <p className="mt-2 whitespace-pre-wrap text-sm text-slate-300">
                           {reception.observations}
                         </p>
+                      </div>
+                    )}
+
+                    {reception.packages.length > 0 && (
+                      <div className="mb-4 rounded-xl border border-slate-800 bg-slate-950 p-4">
+                        <div className="flex items-center gap-2">
+                          <Barcode size={18} className="text-emerald-400" />
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Paquetes rastreables
+                          </p>
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          {reception.packages.map((item) => (
+                            <div
+                              key={item.id}
+                              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2.5"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-mono text-sm font-bold text-white">
+                                  {item.part_number}
+                                </span>
+                                <span className="font-mono text-xs font-semibold text-emerald-400">
+                                  {item.tracking_code}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {item.quantity !== null ? `Cantidad ${item.quantity}` : 'Cantidad pendiente'}
+                                {item.purchase_order ? ` · PO ${item.purchase_order}` : ''}
+                                {item.supplier_package_id
+                                  ? ` · ${item.supplier_package_type || ''}${item.supplier_package_id}`
+                                  : ''}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
 

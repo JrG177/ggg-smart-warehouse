@@ -14,6 +14,16 @@ export type QuickReceptionPhotoInput = {
   file: File
 }
 
+export type QuickReceptionPackageInput = {
+  partNumber: string
+  purchaseOrder: string
+  quantity: number | null
+  supplierCode: string
+  supplierPackageId: string
+  supplierPackageType: '3S' | '4S' | null
+  rawCodes: Record<string, string>
+}
+
 export type QuickReceptionProgress = {
   phase: 'optimizing' | 'uploading' | 'saving'
   completed: number
@@ -33,6 +43,20 @@ const UPLOAD_RETRY_BASE_DELAY_MS = 750
 export type QuickReceptionResult = {
   id: string
   reference_number: string
+  packages: WarehousePackage[]
+}
+
+export type WarehousePackage = {
+  id: string
+  tracking_code: string
+  part_number: string
+  purchase_order: string | null
+  quantity: number | null
+  supplier_code: string | null
+  supplier_package_id: string | null
+  supplier_package_type: '3S' | '4S' | null
+  status: 'received' | 'assigned' | 'shipped'
+  created_at: string
 }
 
 export type QuickReceptionPhoto = {
@@ -51,13 +75,15 @@ export type QuickReceptionHistoryItem = {
   observations: string | null
   created_at: string
   photos: QuickReceptionPhoto[]
+  packages: WarehousePackage[]
 }
 
 type QuickReceptionHistoryRow = Omit<
   QuickReceptionHistoryItem,
-  'photos'
+  'photos' | 'packages'
 > & {
   quick_reception_photos: Omit<QuickReceptionPhoto, 'signed_url'>[] | null
+  warehouse_packages: WarehousePackage[] | null
 }
 
 export async function getQuickReceptionHistory() {
@@ -74,6 +100,18 @@ export async function getQuickReceptionHistory() {
         id,
         photo_type,
         storage_path,
+        created_at
+      ),
+      warehouse_packages (
+        id,
+        tracking_code,
+        part_number,
+        purchase_order,
+        quantity,
+        supplier_code,
+        supplier_package_id,
+        supplier_package_type,
+        status,
         created_at
       )
     `)
@@ -108,8 +146,18 @@ export async function getQuickReceptionHistory() {
         }),
       )
 
-      const { quick_reception_photos: _photos, ...reception } = row
-      return { ...reception, photos } as QuickReceptionHistoryItem
+      const {
+        quick_reception_photos: _photos,
+        warehouse_packages,
+        ...reception
+      } = row
+      void _photos
+
+      return {
+        ...reception,
+        photos,
+        packages: warehouse_packages || [],
+      } as QuickReceptionHistoryItem
     }),
   )
 }
@@ -307,6 +355,7 @@ export async function createQuickReception(
   photos: QuickReceptionPhotoInput[],
   observations?: string,
   onProgress?: QuickReceptionProgressCallback,
+  packages: QuickReceptionPackageInput[] = [],
 ) {
   const total = photos.length
   let optimizedCompleted = 0
@@ -424,6 +473,45 @@ export async function createQuickReception(
       )
     }
 
+    let savedPackages: WarehousePackage[] = []
+
+    if (packages.length > 0) {
+      const { data: packageRows, error: packageError } = await supabase
+        .from('warehouse_packages')
+        .insert(
+          packages.map((item) => ({
+            quick_reception_id: reception.id,
+            part_number: item.partNumber,
+            purchase_order: item.purchaseOrder || null,
+            quantity: item.quantity,
+            supplier_code: item.supplierCode || null,
+            supplier_package_id: item.supplierPackageId || null,
+            supplier_package_type: item.supplierPackageType,
+            raw_codes: item.rawCodes,
+          })),
+        )
+        .select(`
+          id,
+          tracking_code,
+          part_number,
+          purchase_order,
+          quantity,
+          supplier_code,
+          supplier_package_id,
+          supplier_package_type,
+          status,
+          created_at
+        `)
+
+      if (packageError) {
+        throw new Error(
+          `No se pudieron guardar los paquetes escaneados: ${packageError.message}`,
+        )
+      }
+
+      savedPackages = (packageRows || []) as WarehousePackage[]
+    }
+
     const { error: completionError } = await supabase
       .from('quick_receptions')
       .update({ status: 'completed' })
@@ -435,7 +523,10 @@ export async function createQuickReception(
       )
     }
 
-    return reception as QuickReceptionResult
+    return {
+      ...reception,
+      packages: savedPackages,
+    } as QuickReceptionResult
   } catch (error) {
     if (uploadedPaths.length > 0) {
       await supabase.storage
