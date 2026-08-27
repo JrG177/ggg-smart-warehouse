@@ -334,6 +334,11 @@ export function InventoryPage() {
     setExpandedGroupKeys,
   ] = useState<string[]>([])
 
+  const [
+    deletingGroupKey,
+    setDeletingGroupKey,
+  ] = useState<string | null>(null)
+
   const toggleGroup = (
     groupKey: string,
   ) => {
@@ -1043,6 +1048,90 @@ export function InventoryPage() {
       }
     }
 
+  const archiveReceptionGroup =
+    async (
+      group: DailyReceptionGroup,
+    ) => {
+      const confirmed =
+        window.confirm(
+          `¿Eliminar ${group.identifier} del inventario?\n\nSe archivarán sus ${group.pallets.length} registros internos. No se borrarán permanentemente y el historial se conservará.`,
+        )
+
+      if (!confirmed) {
+        return
+      }
+
+      const palletIds =
+        group.pallets.map(
+          (pallet) =>
+            pallet.id,
+        )
+
+      try {
+        setDeletingGroupKey(
+          group.key,
+        )
+
+        setError('')
+
+        const {
+          error: archiveError,
+        } = await supabase
+          .from('pallets')
+          .update({
+            is_archived:
+              true,
+          })
+          .in(
+            'id',
+            palletIds,
+          )
+
+        if (archiveError) {
+          throw new Error(
+            archiveError.message,
+          )
+        }
+
+        const archivedIds =
+          new Set(
+            palletIds,
+          )
+
+        setPallets(
+          (current) =>
+            current.filter(
+              (pallet) =>
+                !archivedIds.has(
+                  pallet.id,
+                ),
+            ),
+        )
+
+        setExpandedGroupKeys(
+          (current) =>
+            current.filter(
+              (key) =>
+                key !== group.key,
+            ),
+        )
+
+        showSuccess(
+          `${group.identifier} se eliminó del inventario visible.`,
+        )
+      } catch (archiveError) {
+        setError(
+          archiveError instanceof Error
+            ? archiveError.message
+            : 'No se pudo eliminar la recepción agrupada.',
+        )
+      } finally {
+        setDeletingGroupKey(
+          null,
+        )
+      }
+    }
+
   const dailyReceptionGroups =
     useMemo(
       () => {
@@ -1247,19 +1336,6 @@ export function InventoryPage() {
       ],
     )
 
-  const totalUnits =
-    pallets.reduce(
-      (total, pallet) =>
-        total +
-        pallet.pallet_parts.reduce(
-          (subTotal, part) =>
-            subTotal +
-            Number(part.quantity || 0),
-          0,
-        ),
-      0,
-    )
-
   const availableCount =
     pallets.filter(
       (pallet) =>
@@ -1272,19 +1348,6 @@ export function InventoryPage() {
       (pallet) =>
         !pallet.location_code,
     ).length
-
-  const uniquePartNumberCount =
-    new Set(
-      pallets.flatMap(
-        (pallet) =>
-          pallet.pallet_parts.map(
-            (part) =>
-              part.part_number
-                .trim()
-                .toLowerCase(),
-          ),
-      ),
-    ).size
 
   return (
     <div className="space-y-8">
@@ -1314,19 +1377,13 @@ export function InventoryPage() {
         </div>
       )}
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 md:grid-cols-3">
         <Metric
           label="Recepciones agrupadas"
           value={String(
             dailyReceptionGroups.length,
           )}
           helper={`${pallets.length} registros internos`}
-        />
-
-        <Metric
-          label="Unidades registradas"
-          value={String(totalUnits)}
-          helper={`${uniquePartNumberCount} números de parte`}
         />
 
         <Metric
@@ -1604,29 +1661,54 @@ export function InventoryPage() {
                           </td>
 
                           <td className="px-5 py-5 text-center">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                toggleGroup(
-                                  group.key,
-                                )
-                              }
-                              className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/20"
-                            >
-                              {isExpanded ? (
-                                <ChevronDown
-                                  size={15}
-                                />
-                              ) : (
-                                <ChevronRight
-                                  size={15}
-                                />
-                              )}
+                            <div className="flex flex-col items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  toggleGroup(
+                                    group.key,
+                                  )
+                                }
+                                className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/20"
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown
+                                    size={15}
+                                  />
+                                ) : (
+                                  <ChevronRight
+                                    size={15}
+                                  />
+                                )}
 
-                              {isExpanded
-                                ? 'Cerrar'
-                                : 'Administrar'}
-                            </button>
+                                {isExpanded
+                                  ? 'Cerrar'
+                                  : 'Administrar'}
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={
+                                  deletingGroupKey ===
+                                  group.key
+                                }
+                                onClick={() =>
+                                  void archiveReceptionGroup(
+                                    group,
+                                  )
+                                }
+                                className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400 transition hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                <Trash2
+                                  size={15}
+                                />
+
+                                {deletingGroupKey ===
+                                group.key
+                                  ? 'Eliminando...'
+                                  : 'Eliminar'}
+                              </button>
+                            </div>
                           </td>
 
                           <td className="px-5 py-5">
