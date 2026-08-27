@@ -8,6 +8,7 @@ import {
   ImagePlus,
   Package,
   Plus,
+  ScanBarcode,
   ShieldCheck,
   Trash2,
   TriangleAlert,
@@ -21,6 +22,9 @@ import {
 import {
   createReception,
 } from '../../services/receivingService'
+import type { QuickReceptionPackageInput } from '../../services/quickReceivingService'
+import { createNormalReceptionPackages } from '../../services/normalReceptionPackageService'
+import { PackageLabelScanner } from './components/PackageLabelScanner'
 
 const steps = [
   {
@@ -122,6 +126,11 @@ type PartItem = {
   palletReference: string
 }
 
+type ScannedPackage = QuickReceptionPackageInput & {
+  localId: string
+  partId: string
+}
+
 type PalletPhoto = {
   id: string
   file: File
@@ -147,6 +156,7 @@ type PalletItem = {
   damaged: string
   notes: string
   parts: PartItem[]
+  scannedPackages: ScannedPackage[]
   documents: PalletDocuments
   photos: PalletPhotos
   completed: boolean
@@ -190,6 +200,7 @@ function toDraftPallet(
 ): DraftPalletItem {
   return {
     ...pallet,
+    scannedPackages: pallet.scannedPackages ?? [],
     photos: {
       packingList: [],
       palletLabel: [],
@@ -205,6 +216,7 @@ function restoreDraftPallet(
 ): PalletItem {
   return {
     ...pallet,
+    scannedPackages: pallet.scannedPackages ?? [],
     photos: {
       packingList: [],
       palletLabel: [],
@@ -259,6 +271,8 @@ function createPallet():
     parts: [
       createPart(),
     ],
+
+    scannedPackages: [],
 
     documents: {
       packingListReference:
@@ -369,6 +383,11 @@ export function NewReceivingPage() {
     >([
       createPallet(),
     ])
+
+  const [
+    scannerPalletId,
+    setScannerPalletId,
+  ] = useState<string | null>(null)
 
   const [
     verification,
@@ -649,6 +668,109 @@ export function NewReceivingPage() {
     )
   }
 
+  const addScannedPackage = (
+    palletId: string,
+    item: QuickReceptionPackageInput,
+  ) => {
+    const duplicateSupplierId = Boolean(item.supplierPackageId) && pallets.some(
+      (pallet) => pallet.scannedPackages.some(
+        (current) =>
+          current.supplierPackageId === item.supplierPackageId &&
+          current.supplierPackageType === item.supplierPackageType,
+      ),
+    )
+
+    if (duplicateSupplierId) {
+      setPalletError('Esa label ya fue agregada a esta recepción.')
+      return
+    }
+
+    setPallets((previous) => previous.map((pallet, palletIndex) => {
+      if (pallet.id !== palletId) return pallet
+
+      const partNumber = item.partNumber.trim().toUpperCase()
+      const parts = pallet.parts.map((part) => ({ ...part }))
+      let targetPart = parts.find(
+        (part) => part.partNumber.trim().toUpperCase() === partNumber,
+      )
+
+      if (!targetPart) {
+        targetPart = parts.find((part) => !part.partNumber.trim())
+      }
+
+      if (!targetPart) {
+        targetPart = createPart()
+        targetPart.palletReference = String(palletIndex + 1)
+        parts.push(targetPart)
+      }
+
+      const currentQuantity = Number(targetPart.quantity) || 0
+      const currentPackages = Number(targetPart.packages) || 0
+
+      targetPart.partNumber = partNumber
+      targetPart.quantity = item.quantity === null
+        ? targetPart.quantity
+        : String(currentQuantity + item.quantity)
+      targetPart.packages = String(currentPackages + 1)
+      targetPart.palletReference ||= String(palletIndex + 1)
+
+      return {
+        ...pallet,
+        parts,
+        scannedPackages: [
+          ...pallet.scannedPackages,
+          {
+            ...item,
+            partNumber,
+            localId: crypto.randomUUID(),
+            partId: targetPart.id,
+          },
+        ],
+      }
+    }))
+
+    setPalletError('')
+  }
+
+  const removeScannedPackage = (
+    palletId: string,
+    packageId: string,
+  ) => {
+    setPallets((previous) => previous.map((pallet) => {
+      if (pallet.id !== palletId) return pallet
+
+      const captured = pallet.scannedPackages.find(
+        (item) => item.localId === packageId,
+      )
+
+      if (!captured) return pallet
+
+      const remainingPackages = pallet.scannedPackages.filter(
+        (item) => item.localId !== packageId,
+      )
+      const parts = pallet.parts.map((part) => {
+        if (part.id !== captured.partId) return part
+
+        const nextQuantity = captured.quantity === null
+          ? Number(part.quantity) || 0
+          : Math.max(0, (Number(part.quantity) || 0) - captured.quantity)
+        const nextPackages = Math.max(0, (Number(part.packages) || 0) - 1)
+
+        return {
+          ...part,
+          quantity: nextQuantity > 0 ? String(nextQuantity) : '',
+          packages: nextPackages > 0 ? String(nextPackages) : '',
+        }
+      })
+
+      return {
+        ...pallet,
+        parts,
+        scannedPackages: remainingPackages,
+      }
+    }))
+  }
+
   const removePart = (
     palletId:
       string,
@@ -686,6 +808,11 @@ export function NewReceivingPage() {
                       part.id !==
                       partId,
                   ),
+
+              scannedPackages:
+                pallet.scannedPackages.filter(
+                  (item) => item.partId !== partId,
+                ),
             }
           },
         ),
@@ -1416,42 +1543,59 @@ const completeCurrentPallet =
           '',
         )
 
-await createReception({
-  carrier:
-    formData.carrier,
+        const reception = await createReception({
+          carrier:
+            formData.carrier,
 
-  otherCarrier:
-    formData.otherCarrier,
+          otherCarrier:
+            formData.otherCarrier,
 
-  trailer:
-    formData.trailer,
+          trailer:
+            formData.trailer,
 
-  palletCount:
-    String(
-      pallets.length,
-    ),
+          palletCount:
+            String(
+              pallets.length,
+            ),
 
-  seal:
-    formData.seal,
+          seal:
+            formData.seal,
 
-  receptionDate:
-    formData.receptionDate,
+          receptionDate:
+            formData.receptionDate,
 
-  receptionTime:
-    formData.receptionTime,
+          receptionTime:
+            formData.receptionTime,
 
-  pallets,
-})
+          pallets,
+        })
+
+        await createNormalReceptionPackages(
+          reception.id,
+          pallets.flatMap((pallet, palletIndex) =>
+            pallet.scannedPackages.map((item) => ({
+              partNumber: item.partNumber,
+              purchaseOrder: item.purchaseOrder,
+              quantity: item.quantity,
+              supplierCode: item.supplierCode,
+              supplierPackageId: item.supplierPackageId,
+              supplierPackageType: item.supplierPackageType,
+              rawCodes: item.rawCodes,
+              palletNumber: palletIndex + 1,
+            })),
+          ),
+        )
+
         window.localStorage.removeItem(
           DRAFT_STORAGE_KEY,
         )
 
         alert(
-          'Recepción guardada correctamente en Supabase.',
+          'Recepción y paquetes guardados correctamente.',
         )
 
         navigate(
-          '/receiving',
+          `/operations/receiving/${reception.id}`,
         )
       } catch (
         error
@@ -1475,6 +1619,13 @@ await createReception({
 
   return (
     <div className="space-y-8">
+
+      {scannerPalletId && (
+        <PackageLabelScanner
+          onClose={() => setScannerPalletId(null)}
+          onSave={(item) => addScannedPackage(scannerPalletId, item)}
+        />
+      )}
 
       <section>
         <button
@@ -1899,9 +2050,62 @@ await createReception({
             )}
 
             <div className="mt-8">
-              <h3 className="font-semibold text-slate-950 dark:text-white">
-                Números de parte
-              </h3>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="font-semibold text-slate-950 dark:text-white">
+                    Números de parte
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-500">
+                    Escanea cada label para capturar la parte, cantidad y datos de rastreo.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setScannerPalletId(currentPallet.id)}
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 text-sm font-bold text-slate-950 transition hover:bg-emerald-400"
+                >
+                  <ScanBarcode size={19} />
+                  Escanear label
+                </button>
+              </div>
+
+              {currentPallet.scannedPackages.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {currentPallet.scannedPackages.map((item, index) => (
+                    <article
+                      key={item.localId}
+                      className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 p-3"
+                    >
+                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500/15 text-sm font-bold text-emerald-500">
+                        {index + 1}
+                      </div>
+
+                      <div className="min-w-0">
+                        <p className="truncate font-mono text-sm font-bold text-slate-950 dark:text-white">
+                          {item.partNumber}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-slate-600 dark:text-slate-400">
+                          {item.quantity !== null ? `Cantidad ${item.quantity}` : 'Cantidad pendiente'}
+                          {item.purchaseOrder ? ` · PO ${item.purchaseOrder}` : ''}
+                          {item.supplierPackageId
+                            ? ` · ${item.supplierPackageType || ''}${item.supplierPackageId}`
+                            : ''}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => removeScannedPackage(currentPallet.id, item.localId)}
+                        className="flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 transition hover:bg-red-500/10 hover:text-red-500"
+                        aria-label={`Eliminar label ${item.partNumber}`}
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              )}
 
               <div className="mt-4 space-y-4">
                 {currentPallet.parts.map(

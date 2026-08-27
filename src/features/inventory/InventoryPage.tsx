@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useMemo,
   useState,
@@ -6,8 +7,11 @@ import {
 
 import {
   Box,
+  ChevronDown,
+  ChevronRight,
   FileCheck2,
   ImagePlus,
+  Layers3,
   MapPin,
   Plus,
   ReceiptText,
@@ -76,6 +80,22 @@ type OpenInvoice = {
   created_at: string
 }
 
+type AggregatedPart = {
+  part_number: string
+  quantity: number
+  packages: number
+}
+
+type DailyReceptionGroup = {
+  key: string
+  identifier: string
+  receptionDate: string
+  carrier: string
+  trailers: string[]
+  pallets: InventoryPallet[]
+  parts: AggregatedPart[]
+}
+
 function getReception(
   pallet: InventoryPallet,
 ): ReceptionInfo | null {
@@ -103,12 +123,38 @@ function getCarrierName(
   )
 }
 
-function getVisualPalletNumber(
+function getDailyReceptionIdentifier(
+  date: string,
+  carrier: string,
+) {
+  const normalizedDate =
+    date.replace(/\D/g, '') ||
+    'SINFECHA'
+
+  const normalizedCarrier =
+    carrier
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 16) ||
+    'SIN-CARRIER'
+
+  return `REC-${normalizedDate}-${normalizedCarrier}`
+}
+
+function getPalletDailyIdentifier(
   pallet: InventoryPallet,
 ) {
-  return `PLT-${String(
-    pallet.pallet_number,
-  ).padStart(6, '0')}`
+  const reception =
+    getReception(pallet)
+
+  return getDailyReceptionIdentifier(
+    reception?.reception_date ||
+      pallet.created_at.slice(0, 10),
+    getCarrierName(reception),
+  )
 }
 
 function formatDate(
@@ -144,6 +190,67 @@ function getStatusClasses(
   }
 
   return 'border-purple-500/30 bg-purple-500/10 text-purple-300'
+}
+
+function getStatusLabel(
+  status: InventoryStatus,
+) {
+  if (status === 'available') {
+    return 'Disponible'
+  }
+
+  if (status === 'reserved') {
+    return 'Reservado'
+  }
+
+  if (status === 'loading') {
+    return 'Cargando'
+  }
+
+  return 'Embarcado'
+}
+
+function getAdministrativeStatusLabel(
+  status: AdministrativeStatus,
+) {
+  if (status === 'in_billing') {
+    return 'En facturación'
+  }
+
+  if (status === 'billed') {
+    return 'Facturada'
+  }
+
+  if (status === 'osd') {
+    return 'OS&D'
+  }
+
+  if (status === 'osd_completed') {
+    return 'OS&D completado'
+  }
+
+  if (status === 'billed_osd') {
+    return 'Facturada · OS&D'
+  }
+
+  return 'Sin proceso'
+}
+
+function summarizeValues(
+  values: string[],
+) {
+  const uniqueValues =
+    Array.from(new Set(values))
+
+  if (uniqueValues.length === 0) {
+    return '—'
+  }
+
+  if (uniqueValues.length <= 2) {
+    return uniqueValues.join(' · ')
+  }
+
+  return `${uniqueValues.length} estados`
 }
 
 export function InventoryPage() {
@@ -221,6 +328,28 @@ export function InventoryPage() {
 
   const [savingInvoice, setSavingInvoice] =
     useState(false)
+
+  const [
+    expandedGroupKeys,
+    setExpandedGroupKeys,
+  ] = useState<string[]>([])
+
+  const toggleGroup = (
+    groupKey: string,
+  ) => {
+    setExpandedGroupKeys(
+      (current) =>
+        current.includes(groupKey)
+          ? current.filter(
+              (key) =>
+                key !== groupKey,
+            )
+          : [
+              ...current,
+              groupKey,
+            ],
+    )
+  }
 
   const showSuccess = (
     message: string,
@@ -834,7 +963,7 @@ export function InventoryPage() {
 
         await loadInventory()
         showSuccess(
-          'Pallet enviado a OS&D.',
+          'Registro enviado a OS&D.',
         )
       } catch (actionError) {
         setError(
@@ -854,9 +983,9 @@ export function InventoryPage() {
     ) => {
       const confirmed =
         window.confirm(
-          `¿Eliminar ${getVisualPalletNumber(
+          `¿Eliminar un registro interno de ${getPalletDailyIdentifier(
             pallet,
-          )} del inventario?\n\nEl registro no se borrará permanentemente; quedará archivado para conservar el historial.`,
+          )}?\n\nNo se borrará permanentemente; quedará archivado para conservar el historial.`,
         )
 
       if (!confirmed) {
@@ -899,13 +1028,13 @@ export function InventoryPage() {
         )
 
         showSuccess(
-          'Pallet eliminado del inventario visible.',
+          'Registro eliminado del inventario visible.',
         )
       } catch (archiveError) {
         setError(
           archiveError instanceof Error
             ? archiveError.message
-            : 'No se pudo eliminar el pallet del inventario.',
+            : 'No se pudo eliminar el registro del inventario.',
         )
       } finally {
         setUpdatingPalletId(
@@ -914,7 +1043,162 @@ export function InventoryPage() {
       }
     }
 
-  const filteredPallets =
+  const dailyReceptionGroups =
+    useMemo(
+      () => {
+        const grouped =
+          new Map<
+            string,
+            {
+              key: string
+              receptionDate: string
+              carrier: string
+              trailers: Set<string>
+              pallets: InventoryPallet[]
+              parts: Map<string, AggregatedPart>
+            }
+          >()
+
+        pallets.forEach(
+          (pallet) => {
+            const reception =
+              getReception(pallet)
+
+            const receptionDate =
+              reception?.reception_date ||
+              pallet.created_at.slice(0, 10)
+
+            const carrier =
+              getCarrierName(reception)
+
+            const key =
+              `${receptionDate}|${carrier.toLowerCase()}`
+
+            const current =
+              grouped.get(key) || {
+                key,
+                receptionDate,
+                carrier,
+                trailers:
+                  new Set<string>(),
+                pallets: [],
+                parts:
+                  new Map<
+                    string,
+                    AggregatedPart
+                  >(),
+              }
+
+            current.pallets.push(
+              pallet,
+            )
+
+            if (reception?.trailer) {
+              current.trailers.add(
+                reception.trailer,
+              )
+            }
+
+            pallet.pallet_parts.forEach(
+              (part) => {
+                const partNumber =
+                  part.part_number.trim() ||
+                  'Sin número de parte'
+
+                const partKey =
+                  partNumber.toLowerCase()
+
+                const existingPart =
+                  current.parts.get(
+                    partKey,
+                  )
+
+                if (existingPart) {
+                  existingPart.quantity +=
+                    Number(
+                      part.quantity || 0,
+                    )
+
+                  existingPart.packages +=
+                    Number(
+                      part.packages || 0,
+                    )
+                } else {
+                  current.parts.set(
+                    partKey,
+                    {
+                      part_number:
+                        partNumber,
+                      quantity:
+                        Number(
+                          part.quantity || 0,
+                        ),
+                      packages:
+                        Number(
+                          part.packages || 0,
+                        ),
+                    },
+                  )
+                }
+              },
+            )
+
+            grouped.set(
+              key,
+              current,
+            )
+          },
+        )
+
+        return Array.from(
+          grouped.values(),
+        )
+          .map(
+            (group): DailyReceptionGroup => ({
+              key:
+                group.key,
+              identifier:
+                getDailyReceptionIdentifier(
+                  group.receptionDate,
+                  group.carrier,
+                ),
+              receptionDate:
+                group.receptionDate,
+              carrier:
+                group.carrier,
+              trailers:
+                Array.from(
+                  group.trailers,
+                ).sort(),
+              pallets:
+                group.pallets,
+              parts:
+                Array.from(
+                  group.parts.values(),
+                ).sort((first, second) =>
+                  first.part_number.localeCompare(
+                    second.part_number,
+                    undefined,
+                    {
+                      numeric: true,
+                    },
+                  ),
+                ),
+            }),
+          )
+          .sort((first, second) =>
+            second.receptionDate.localeCompare(
+              first.receptionDate,
+            ) ||
+            first.carrier.localeCompare(
+              second.carrier,
+            ),
+          )
+      },
+      [pallets],
+    )
+
+  const filteredReceptionGroups =
     useMemo(
       () => {
         const search =
@@ -923,40 +1207,42 @@ export function InventoryPage() {
             .toLowerCase()
 
         if (!search) {
-          return pallets
+          return dailyReceptionGroups
         }
 
-        return pallets.filter(
-          (pallet) => {
-            const reception =
-              getReception(pallet)
-
-            const parts =
-              pallet.pallet_parts
+        return dailyReceptionGroups.filter(
+          (group) =>
+            [
+              group.identifier,
+              group.carrier,
+              group.receptionDate,
+              group.trailers.join(' '),
+              group.parts
                 .map(
                   (part) =>
                     part.part_number,
                 )
-                .join(' ')
+                .join(' '),
+              group.pallets
+                .map((pallet) => {
+                  const reception =
+                    getReception(pallet)
 
-            return [
-              getVisualPalletNumber(pallet),
-              reception?.reception_number || '',
-              getCarrierName(reception),
-              reception?.trailer || '',
-              pallet.location_code || '',
-              parts,
-            ].some(
-              (value) =>
-                value
-                  .toLowerCase()
-                  .includes(search),
-            )
-          },
+                  return [
+                    reception?.reception_number || '',
+                    pallet.location_code || '',
+                  ].join(' ')
+                })
+                .join(' '),
+            ].some((value) =>
+              value
+                .toLowerCase()
+                .includes(search),
+            ),
         )
       },
       [
-        pallets,
+        dailyReceptionGroups,
         searchTerm,
       ],
     )
@@ -981,20 +1267,24 @@ export function InventoryPage() {
         'available',
     ).length
 
-  const reservedLoadingCount =
-    pallets.filter(
-      (pallet) =>
-        pallet.inventory_status ===
-          'reserved' ||
-        pallet.inventory_status ===
-          'loading',
-    ).length
-
   const withoutLocationCount =
     pallets.filter(
       (pallet) =>
         !pallet.location_code,
     ).length
+
+  const uniquePartNumberCount =
+    new Set(
+      pallets.flatMap(
+        (pallet) =>
+          pallet.pallet_parts.map(
+            (part) =>
+              part.part_number
+                .trim()
+                .toLowerCase(),
+          ),
+      ),
+    ).size
 
   return (
     <div className="space-y-8">
@@ -1008,7 +1298,7 @@ export function InventoryPage() {
         </h1>
 
         <p className="mt-2 text-slate-400">
-          Consulta los pallets recibidos, su contenido, ubicación física y estado dentro de la operación.
+          Consulta el material agrupado por fecha y carrier, con todos sus números de parte y controles operativos.
         </p>
       </section>
 
@@ -1026,21 +1316,23 @@ export function InventoryPage() {
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Metric
-          label="Pallets en inventario"
-          value={String(pallets.length)}
-          helper={`${totalUnits} unidades registradas`}
+          label="Recepciones agrupadas"
+          value={String(
+            dailyReceptionGroups.length,
+          )}
+          helper={`${pallets.length} registros internos`}
+        />
+
+        <Metric
+          label="Unidades registradas"
+          value={String(totalUnits)}
+          helper={`${uniquePartNumberCount} números de parte`}
         />
 
         <Metric
           label="Disponibles"
           value={String(availableCount)}
-          helper="Listos para operación"
-        />
-
-        <Metric
-          label="Reservados / Cargando"
-          value={String(reservedLoadingCount)}
-          helper="Comprometidos para salida"
+          helper="Registros listos para operación"
         />
 
         <Metric
@@ -1058,7 +1350,7 @@ export function InventoryPage() {
             </h2>
 
             <p className="mt-1 text-sm text-slate-500">
-              Pallets registrados desde Recepción
+              Una recepción por fecha y carrier
             </p>
           </div>
 
@@ -1076,7 +1368,7 @@ export function InventoryPage() {
                     event.target.value,
                   )
                 }
-                placeholder="Buscar pallet, recepción, parte..."
+                placeholder="Buscar identificador, carrier o parte..."
                 className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm outline-none sm:w-80"
               />
             </div>
@@ -1095,19 +1387,36 @@ export function InventoryPage() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1250px] text-left">
+          <table className="w-full min-w-[1180px] text-left">
             <thead className="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-500">
               <tr>
-                <th className="px-5 py-4">Pallet</th>
-                <th className="px-5 py-4">Recepción</th>
-                <th className="px-5 py-4">Carrier / Trailer</th>
-                <th className="px-5 py-4">Números de parte</th>
-                <th className="px-5 py-4">Cantidad</th>
-                <th className="px-5 py-4">Ubicación</th>
-                <th className="px-5 py-4">Estado</th>
-                <th className="px-5 py-4">Proceso administrativo</th>
-                <th className="px-5 py-4 text-center">Acciones</th>
-                <th className="px-5 py-4">Entrada</th>
+                <th className="px-5 py-4">
+                  Identificador
+                </th>
+                <th className="px-5 py-4">
+                  Carrier / Trailer
+                </th>
+                <th className="px-5 py-4">
+                  Números de parte
+                </th>
+                <th className="px-5 py-4">
+                  Cantidad
+                </th>
+                <th className="px-5 py-4">
+                  Ubicaciones
+                </th>
+                <th className="px-5 py-4">
+                  Estado
+                </th>
+                <th className="px-5 py-4">
+                  Proceso administrativo
+                </th>
+                <th className="px-5 py-4 text-center">
+                  Acciones
+                </th>
+                <th className="px-5 py-4">
+                  Entrada
+                </th>
               </tr>
             </thead>
 
@@ -1115,275 +1424,570 @@ export function InventoryPage() {
               {loading ? (
                 <tr>
                   <td
-                    colSpan={10}
+                    colSpan={9}
                     className="px-6 py-12 text-center text-slate-500"
                   >
                     Cargando inventario...
                   </td>
                 </tr>
+              ) : filteredReceptionGroups.length ===
+                0 ? (
+                <tr>
+                  <td
+                    colSpan={9}
+                    className="px-6 py-12 text-center text-slate-500"
+                  >
+                    {searchTerm
+                      ? 'No se encontraron recepciones con esa búsqueda.'
+                      : 'Todavía no hay material registrado.'}
+                  </td>
+                </tr>
               ) : (
-                filteredPallets.map(
-                  (pallet) => {
-                    const reception =
-                      getReception(pallet)
+                filteredReceptionGroups.map(
+                  (group) => {
+                    const isExpanded =
+                      expandedGroupKeys.includes(
+                        group.key,
+                      )
 
                     const totalQuantity =
-                      pallet.pallet_parts.reduce(
+                      group.parts.reduce(
                         (total, part) =>
                           total +
-                          Number(
-                            part.quantity || 0,
-                          ),
+                          part.quantity,
                         0,
                       )
 
+                    const locations =
+                      Array.from(
+                        new Set(
+                          group.pallets
+                            .map(
+                              (pallet) =>
+                                pallet.location_code,
+                            )
+                            .filter(
+                              (
+                                location,
+                              ): location is string =>
+                                Boolean(location),
+                            ),
+                        ),
+                      )
+
+                    const withoutLocation =
+                      group.pallets.filter(
+                        (pallet) =>
+                          !pallet.location_code,
+                      ).length
+
+                    const inventorySummary =
+                      summarizeValues(
+                        group.pallets.map(
+                          (pallet) =>
+                            getStatusLabel(
+                              pallet.inventory_status,
+                            ),
+                        ),
+                      )
+
+                    const administrativeSummary =
+                      summarizeValues(
+                        group.pallets.map(
+                          (pallet) =>
+                            getAdministrativeStatusLabel(
+                              pallet.administrative_status,
+                            ),
+                        ),
+                      )
+
                     return (
-                      <tr key={pallet.id}>
-                        <td className="px-5 py-5">
-                          <div className="flex items-center gap-3">
-                            <div className="rounded-lg bg-slate-800 p-2 text-emerald-400">
-                              <Box size={17} />
+                      <Fragment key={group.key}>
+                        <tr className="transition hover:bg-slate-800/40">
+                          <td className="px-5 py-5">
+                            <div className="flex items-center gap-3">
+                              <div className="rounded-lg bg-emerald-500/10 p-2 text-emerald-400">
+                                <Layers3 size={18} />
+                              </div>
+
+                              <div>
+                                <p className="font-semibold text-white">
+                                  {group.identifier}
+                                </p>
+
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {group.pallets.length}{' '}
+                                  registro(s) interno(s)
+                                </p>
+                              </div>
                             </div>
+                          </td>
 
-                            <div>
-                              <p className="font-semibold">
-                                {getVisualPalletNumber(
-                                  pallet,
-                                )}
-                              </p>
+                          <td className="px-5 py-5">
+                            <p className="font-medium text-slate-200">
+                              {group.carrier}
+                            </p>
 
-                              <p className="text-xs text-slate-600">
-                                {pallet.id.slice(0, 8)}
-                              </p>
-                            </div>
-                          </div>
-                        </td>
-
-                        <td className="px-5 py-5">
-                          {reception?.reception_number ||
-                            '—'}
-                        </td>
-
-                        <td className="px-5 py-5">
-                          <p>
-                            {getCarrierName(
-                              reception,
-                            )}
-                          </p>
-                          <p className="text-xs text-slate-500">
-                            {reception?.trailer ||
-                              '—'}
-                          </p>
-                        </td>
-
-                        <td className="px-5 py-5">
-                          <div className="flex flex-wrap gap-2">
-                            {pallet.pallet_parts.map(
-                              (part) => (
-                                <span
-                                  key={part.id}
-                                  className="rounded-lg bg-slate-800 px-2 py-1 text-xs"
-                                >
-                                  {part.part_number}
-                                </span>
-                              ),
-                            )}
-                          </div>
-                        </td>
-
-                        <td className="px-5 py-5">
-                          {totalQuantity}
-                        </td>
-
-                        <td className="px-5 py-5">
-                          {editingLocationId ===
-                          pallet.id ? (
-                            <div className="flex gap-2">
-                              <input
-                                value={locationDraft}
-                                onChange={(event) =>
-                                  setLocationDraft(
-                                    event.target.value,
+                            <p className="mt-1 text-xs text-slate-500">
+                              {group.trailers.length >
+                              0
+                                ? group.trailers.join(
+                                    ' · ',
                                   )
-                                }
-                                className="w-28 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs"
-                              />
+                                : 'Sin trailer'}
+                            </p>
+                          </td>
 
-                              <button
-                                onClick={() =>
-                                  void saveLocation(
-                                    pallet.id,
-                                  )
-                                }
-                                className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-slate-950"
-                              >
-                                Guardar
-                              </button>
-                            </div>
-                          ) : (
+                          <td className="px-5 py-5">
                             <button
+                              type="button"
+                              aria-expanded={isExpanded}
                               onClick={() =>
-                                startEditingLocation(
-                                  pallet,
+                                toggleGroup(
+                                  group.key,
                                 )
                               }
-                              className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs"
+                              className="inline-flex min-w-44 items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-left text-sm font-semibold text-slate-200 transition hover:border-emerald-500/50"
                             >
-                              <MapPin size={14} />
-                              {pallet.location_code ||
-                                'Asignar ubicación'}
-                            </button>
-                          )}
-                        </td>
-
-                        <td className="px-5 py-5">
-                          <select
-                            value={
-                              pallet.inventory_status
-                            }
-                            disabled={
-                              updatingPalletId ===
-                              pallet.id
-                            }
-                            onChange={(event) =>
-                              void updateInventoryStatus(
-                                pallet.id,
-                                event.target.value as InventoryStatus,
-                              )
-                            }
-                            className={[
-                              'rounded-xl border px-3 py-2 text-xs font-semibold outline-none',
-                              getStatusClasses(
-                                pallet.inventory_status,
-                              ),
-                            ].join(' ')}
-                          >
-                            <option value="available">
-                              Disponible
-                            </option>
-                            <option value="reserved">
-                              Reservado
-                            </option>
-                            <option value="loading">
-                              Cargando
-                            </option>
-                            <option value="shipped">
-                              Embarcado
-                            </option>
-                          </select>
-                        </td>
-
-                        <td className="px-5 py-5">
-                          {pallet.administrative_status ===
-                          'billed' ? (
-                            <span className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/50 bg-emerald-500/15 px-4 py-2 text-xs font-bold text-emerald-300 shadow-[0_0_18px_rgba(52,211,153,0.20)]">
-                              <FileCheck2 size={16} />
-                              Facturada
-                            </span>
-                          ) : pallet.administrative_status ===
-                            'billed_osd' ? (
-                            <span className="inline-flex items-center gap-2 rounded-xl border border-red-400/50 bg-red-500/10 px-4 py-2 text-xs font-bold text-red-300 shadow-[0_0_18px_rgba(248,113,113,0.15)]">
-                              <ShieldAlert size={15} />
-                              Facturada · OS&amp;D
-                            </span>
-                          ) : pallet.administrative_status ===
-                            'in_billing' ? (
-                            <span className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-400">
-                              En facturación
-                            </span>
-                          ) : pallet.administrative_status ===
-                            'osd' ||
-                            pallet.administrative_status ===
-                              'osd_completed' ? (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400">
-                                <ShieldAlert size={15} />
-                                {pallet.administrative_status ===
-                                'osd'
-                                  ? 'OS&D'
-                                  : 'OS&D completado'}
+                              <span>
+                                {group.parts.length}{' '}
+                                número(s) de parte
                               </span>
 
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  openBillingModal(
-                                    pallet,
+                              {isExpanded ? (
+                                <ChevronDown
+                                  size={17}
+                                  className="text-emerald-400"
+                                />
+                              ) : (
+                                <ChevronRight
+                                  size={17}
+                                  className="text-slate-500"
+                                />
+                              )}
+                            </button>
+                          </td>
+
+                          <td className="px-5 py-5 font-semibold text-slate-200">
+                            {totalQuantity}
+                          </td>
+
+                          <td className="px-5 py-5">
+                            <p className="text-sm text-slate-300">
+                              {locations.length >
+                              0
+                                ? locations.join(
+                                    ' · ',
                                   )
-                                }
-                                className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-400"
-                              >
-                                <ReceiptText size={15} />
-                                Facturar
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  openBillingModal(
-                                    pallet,
-                                  )
-                                }
-                                className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-400"
-                              >
-                                <ReceiptText size={15} />
-                                Facturar
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void sendToOsd(
-                                    pallet,
-                                  )
-                                }
-                                className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400"
-                              >
-                                <ShieldAlert size={15} />
-                                OS&amp;D
-                              </button>
-                            </div>
-                          )}
-                        </td>
-
-                        <td className="px-5 py-5 text-center">
-                          <button
-                            type="button"
-                            title="Eliminar del inventario"
-                            aria-label="Eliminar del inventario"
-                            disabled={
-                              updatingPalletId ===
-                              pallet.id
-                            }
-                            onClick={() =>
-                              void archivePallet(
-                                pallet,
-                              )
-                            }
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 transition hover:bg-red-500/20 disabled:opacity-40"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        </td>
-
-                        <td className="px-5 py-5">
-                          <p>
-                            {reception
-                              ? formatDate(
-                                  reception.reception_date,
-                                )
-                              : '—'}
-                          </p>
-
-                          {pallet.damaged && (
-                            <p className="text-xs font-semibold text-red-400">
-                              Material dañado
+                                : 'Sin ubicación'}
                             </p>
-                          )}
-                        </td>
-                      </tr>
+
+                            {withoutLocation >
+                              0 && (
+                              <p className="mt-1 text-xs font-semibold text-amber-400">
+                                {withoutLocation}{' '}
+                                pendiente(s)
+                              </p>
+                            )}
+                          </td>
+
+                          <td className="px-5 py-5">
+                            <span className="rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-semibold text-slate-300">
+                              {inventorySummary}
+                            </span>
+                          </td>
+
+                          <td className="px-5 py-5">
+                            <span className="text-sm text-slate-300">
+                              {administrativeSummary}
+                            </span>
+                          </td>
+
+                          <td className="px-5 py-5 text-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                toggleGroup(
+                                  group.key,
+                                )
+                              }
+                              className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-400 transition hover:bg-emerald-500/20"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown
+                                  size={15}
+                                />
+                              ) : (
+                                <ChevronRight
+                                  size={15}
+                                />
+                              )}
+
+                              {isExpanded
+                                ? 'Cerrar'
+                                : 'Administrar'}
+                            </button>
+                          </td>
+
+                          <td className="px-5 py-5">
+                            <p className="text-sm text-slate-300">
+                              {formatDate(
+                                group.receptionDate,
+                              )}
+                            </p>
+
+                            {group.pallets.some(
+                              (pallet) =>
+                                pallet.damaged,
+                            ) && (
+                              <p className="mt-1 text-xs font-semibold text-red-400">
+                                Contiene material dañado
+                              </p>
+                            )}
+                          </td>
+                        </tr>
+
+                        {isExpanded && (
+                          <tr>
+                            <td
+                              colSpan={9}
+                              className="bg-slate-950/60 px-5 py-5"
+                            >
+                              <div className="grid gap-5 xl:grid-cols-[minmax(280px,0.8fr)_minmax(520px,1.7fr)]">
+                                <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
+                                  <h3 className="font-semibold text-white">
+                                    Números de parte
+                                  </h3>
+
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    Cantidades sumadas de toda la recepción del día.
+                                  </p>
+
+                                  <div className="mt-4 max-h-96 space-y-2 overflow-y-auto pr-1">
+                                    {group.parts.map(
+                                      (part) => (
+                                        <div
+                                          key={
+                                            part.part_number
+                                          }
+                                          className="flex items-center justify-between gap-4 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3"
+                                        >
+                                          <div className="flex min-w-0 items-center gap-3">
+                                            <Box
+                                              size={16}
+                                              className="shrink-0 text-emerald-400"
+                                            />
+
+                                            <p className="truncate font-semibold text-slate-200">
+                                              {
+                                                part.part_number
+                                              }
+                                            </p>
+                                          </div>
+
+                                          <div className="shrink-0 text-right">
+                                            <p className="text-sm font-bold text-white">
+                                              {
+                                                part.quantity
+                                              }{' '}
+                                              unidades
+                                            </p>
+
+                                            {part.packages >
+                                              0 && (
+                                              <p className="text-xs text-slate-500">
+                                                {
+                                                  part.packages
+                                                }{' '}
+                                                bultos
+                                              </p>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ),
+                                    )}
+                                  </div>
+                                </section>
+
+                                <section className="space-y-3">
+                                  <div>
+                                    <h3 className="font-semibold text-white">
+                                      Controles internos
+                                    </h3>
+
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      Los registros internos permanecen separados para conservar ubicación, estado, facturación y OS&amp;D.
+                                    </p>
+                                  </div>
+
+                                  {group.pallets.map(
+                                    (
+                                      pallet,
+                                      palletIndex,
+                                    ) => (
+                                      <article
+                                        key={pallet.id}
+                                        className="rounded-2xl border border-slate-800 bg-slate-900 p-4"
+                                      >
+                                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                          <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                              <p className="font-semibold text-slate-200">
+                                                Registro interno{' '}
+                                                {palletIndex +
+                                                  1}
+                                              </p>
+
+                                              {pallet.damaged && (
+                                                <span className="rounded-full bg-red-500/10 px-2 py-1 text-xs font-semibold text-red-400">
+                                                  Dañado
+                                                </span>
+                                              )}
+                                            </div>
+
+                                            <div className="mt-2 flex flex-wrap gap-2">
+                                              {pallet.pallet_parts.map(
+                                                (part) => (
+                                                  <span
+                                                    key={
+                                                      part.id
+                                                    }
+                                                    className="rounded-lg bg-slate-800 px-2 py-1 text-xs text-slate-300"
+                                                  >
+                                                    {
+                                                      part.part_number
+                                                    }
+                                                  </span>
+                                                ),
+                                              )}
+                                            </div>
+                                          </div>
+
+                                          <button
+                                            type="button"
+                                            title="Archivar registro"
+                                            aria-label="Archivar registro"
+                                            disabled={
+                                              updatingPalletId ===
+                                              pallet.id
+                                            }
+                                            onClick={() =>
+                                              void archivePallet(
+                                                pallet,
+                                              )
+                                            }
+                                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 transition hover:bg-red-500/20 disabled:opacity-40"
+                                          >
+                                            <Trash2
+                                              size={16}
+                                            />
+                                          </button>
+                                        </div>
+
+                                        <div className="mt-4 grid gap-3 md:grid-cols-3">
+                                          <div>
+                                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                              Ubicación
+                                            </p>
+
+                                            {editingLocationId ===
+                                            pallet.id ? (
+                                              <div className="flex gap-2">
+                                                <input
+                                                  value={
+                                                    locationDraft
+                                                  }
+                                                  onChange={(
+                                                    event,
+                                                  ) =>
+                                                    setLocationDraft(
+                                                      event
+                                                        .target
+                                                        .value,
+                                                    )
+                                                  }
+                                                  className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs"
+                                                />
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    void saveLocation(
+                                                      pallet.id,
+                                                    )
+                                                  }
+                                                  className="rounded-lg bg-emerald-500 px-3 py-2 text-xs font-semibold text-slate-950"
+                                                >
+                                                  Guardar
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  startEditingLocation(
+                                                    pallet,
+                                                  )
+                                                }
+                                                className="inline-flex w-full items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300"
+                                              >
+                                                <MapPin
+                                                  size={14}
+                                                />
+
+                                                {pallet.location_code ||
+                                                  'Asignar ubicación'}
+                                              </button>
+                                            )}
+                                          </div>
+
+                                          <div>
+                                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                              Estado
+                                            </p>
+
+                                            <select
+                                              value={
+                                                pallet.inventory_status
+                                              }
+                                              disabled={
+                                                updatingPalletId ===
+                                                pallet.id
+                                              }
+                                              onChange={(
+                                                event,
+                                              ) =>
+                                                void updateInventoryStatus(
+                                                  pallet.id,
+                                                  event
+                                                    .target
+                                                    .value as InventoryStatus,
+                                                )
+                                              }
+                                              className={[
+                                                'w-full rounded-xl border px-3 py-2 text-xs font-semibold outline-none',
+                                                getStatusClasses(
+                                                  pallet.inventory_status,
+                                                ),
+                                              ].join(
+                                                ' ',
+                                              )}
+                                            >
+                                              <option value="available">
+                                                Disponible
+                                              </option>
+                                              <option value="reserved">
+                                                Reservado
+                                              </option>
+                                              <option value="loading">
+                                                Cargando
+                                              </option>
+                                              <option value="shipped">
+                                                Embarcado
+                                              </option>
+                                            </select>
+                                          </div>
+
+                                          <div>
+                                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                              Proceso
+                                            </p>
+
+                                            {pallet.administrative_status ===
+                                            'billed' ? (
+                                              <span className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/50 bg-emerald-500/15 px-3 py-2 text-xs font-bold text-emerald-300">
+                                                <FileCheck2
+                                                  size={15}
+                                                />
+                                                Facturada
+                                              </span>
+                                            ) : pallet.administrative_status ===
+                                              'billed_osd' ? (
+                                              <span className="inline-flex items-center gap-2 rounded-xl border border-red-400/50 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-300">
+                                                <ShieldAlert
+                                                  size={15}
+                                                />
+                                                Facturada · OS&amp;D
+                                              </span>
+                                            ) : pallet.administrative_status ===
+                                              'in_billing' ? (
+                                              <span className="inline-flex rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-400">
+                                                En facturación
+                                              </span>
+                                            ) : pallet.administrative_status ===
+                                                'osd' ||
+                                              pallet.administrative_status ===
+                                                'osd_completed' ? (
+                                              <div className="flex flex-wrap gap-2">
+                                                <span className="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400">
+                                                  <ShieldAlert
+                                                    size={15}
+                                                  />
+                                                  {pallet.administrative_status ===
+                                                  'osd'
+                                                    ? 'OS&D'
+                                                    : 'OS&D completado'}
+                                                </span>
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    openBillingModal(
+                                                      pallet,
+                                                    )
+                                                  }
+                                                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-400"
+                                                >
+                                                  <ReceiptText
+                                                    size={15}
+                                                  />
+                                                  Facturar
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <div className="flex flex-wrap gap-2">
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    openBillingModal(
+                                                      pallet,
+                                                    )
+                                                  }
+                                                  className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-400"
+                                                >
+                                                  <ReceiptText
+                                                    size={15}
+                                                  />
+                                                  Facturar
+                                                </button>
+
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    void sendToOsd(
+                                                      pallet,
+                                                    )
+                                                  }
+                                                  className="inline-flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-semibold text-red-400"
+                                                >
+                                                  <ShieldAlert
+                                                    size={15}
+                                                  />
+                                                  OS&amp;D
+                                                </button>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      </article>
+                                    ),
+                                  )}
+                                </section>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     )
                   },
                 )
@@ -1392,7 +1996,6 @@ export function InventoryPage() {
           </table>
         </div>
       </section>
-
       {billingModalPallet && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4">
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
@@ -1403,10 +2006,9 @@ export function InventoryPage() {
                 </p>
 
                 <h2 className="mt-1 text-2xl font-bold">
-                  {getReception(
+                  {getPalletDailyIdentifier(
                     billingModalPallet,
-                  )?.reception_number ||
-                    'Recepción'}
+                  )}
                 </h2>
               </div>
 

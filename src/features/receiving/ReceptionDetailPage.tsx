@@ -5,6 +5,7 @@ import {
 
 import {
   ArrowLeft,
+  Barcode,
   Box,
   Camera,
   FileText,
@@ -13,6 +14,7 @@ import {
   Package,
   Pencil,
   Plus,
+  Printer,
   Save,
   Trash2,
   TriangleAlert,
@@ -35,6 +37,12 @@ import {
   type ReceptionPhoto,
   type UpdatePalletPartInput,
 } from '../../services/receivingService'
+import {
+  listNormalReceptionPackages,
+  type NormalReceptionWarehousePackage,
+} from '../../services/normalReceptionPackageService'
+import { WarehouseQrLabel } from './components/WarehouseQrLabel'
+import './warehouseQrPrint.css'
 
 type ArrivalEditForm = {
   carrier: string
@@ -308,6 +316,11 @@ export function ReceptionDetailPage() {
     )
 
   const [
+    trackedPackages,
+    setTrackedPackages,
+  ] = useState<NormalReceptionWarehousePackage[]>([])
+
+  const [
     loading,
     setLoading,
   ] =
@@ -416,14 +429,16 @@ export function ReceptionDetailPage() {
           '',
         )
 
-        const data =
-          await getReceptionById(
-            id,
-          )
+        const [data, packages] = await Promise.all([
+          getReceptionById(id),
+          listNormalReceptionPackages(id),
+        ])
 
         setReception(
           data,
         )
+
+        setTrackedPackages(packages)
       } catch (
         loadError
       ) {
@@ -1156,6 +1171,39 @@ export function ReceptionDetailPage() {
           }
         />
       </section>
+
+      {trackedPackages.length > 0 && (
+        <section className="rounded-2xl border border-emerald-500/25 bg-white p-5 dark:bg-slate-900 sm:p-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <Barcode size={21} className="text-emerald-500" />
+                <h2 className="text-lg font-semibold text-slate-950 dark:text-white">
+                  Paquetes rastreables y QR de GGG
+                </h2>
+              </div>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                {trackedPackages.length} {trackedPackages.length === 1 ? 'label registrada' : 'labels registradas'} en esta recepción.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-300"
+            >
+              <Printer size={18} />
+              Imprimir QR
+            </button>
+          </div>
+
+          <div className="warehouse-qr-print mt-5 grid gap-3 md:grid-cols-2">
+            {trackedPackages.map((item) => (
+              <WarehouseQrLabel key={item.id} item={item} />
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
