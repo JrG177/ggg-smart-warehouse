@@ -246,6 +246,24 @@ export function ShipmentsPage() {
     )
 
   const [
+    carrierFilter,
+    setCarrierFilter,
+  ] =
+    useState(
+      'ALL',
+    )
+
+  const [
+    sortOrder,
+    setSortOrder,
+  ] =
+    useState<
+      'newest' | 'oldest'
+    >(
+      'newest',
+    )
+
+  const [
     error,
     setError,
   ] =
@@ -369,6 +387,40 @@ export function ShipmentsPage() {
     [],
   )
 
+  const carrierOptions =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            shipments
+              .map(
+                (shipment) =>
+                  getInvoice(
+                    shipment,
+                  )?.carrier,
+              )
+              .filter(
+                (
+                  carrier,
+                ): carrier is string =>
+                  Boolean(
+                    carrier,
+                  ),
+              ),
+          ),
+        ).sort((first, second) =>
+          first.localeCompare(
+            second,
+            undefined,
+            {
+              sensitivity:
+                'base',
+            },
+          ),
+        ),
+      [shipments],
+    )
+
   const filtered =
     useMemo(
       () => {
@@ -377,57 +429,83 @@ export function ShipmentsPage() {
             .trim()
             .toLowerCase()
 
-        if (!search) {
-          return shipments
-        }
+        return shipments
+          .filter(
+            (
+              shipment,
+            ) => {
+              const invoice =
+                getInvoice(
+                  shipment,
+                )
 
-        return shipments.filter(
-          (
-            shipment,
-          ) => {
-            const invoice =
-              getInvoice(
-                shipment,
-              )
+              const matchesCarrier =
+                carrierFilter ===
+                  'ALL' ||
+                invoice?.carrier ===
+                  carrierFilter
 
-            return [
-              invoice
-                ?.invoice_number ||
-                '',
-              invoice
-                ?.carrier ||
-                '',
-              ...(
-                invoice
-                  ?.invoice_receptions
-                  .map(
-                    (
-                      item,
-                    ) =>
-                      getReception(
-                        item,
-                      )
-                        ?.reception_number ||
-                      '',
-                  ) ||
-                []
-              ),
-            ].some(
-              (
-                value,
-              ) =>
-                value
-                  .toLowerCase()
-                  .includes(
-                    search,
+              const matchesSearch =
+                !search ||
+                [
+                  invoice
+                    ?.invoice_number ||
+                    '',
+                  invoice
+                    ?.carrier ||
+                    '',
+                  ...(
+                    invoice
+                      ?.invoice_receptions
+                      .map(
+                        (
+                          item,
+                        ) =>
+                          getReception(
+                            item,
+                          )
+                            ?.reception_number ||
+                          '',
+                      ) ||
+                    []
                   ),
-            )
-          },
-        )
+                ].some(
+                  (
+                    value,
+                  ) =>
+                    value
+                      .toLowerCase()
+                      .includes(
+                        search,
+                      ),
+                )
+
+              return (
+                matchesCarrier &&
+                matchesSearch
+              )
+            },
+          )
+          .sort((first, second) => {
+            const difference =
+              new Date(
+                second.shipped_at,
+              ).getTime() -
+              new Date(
+                first.shipped_at,
+              ).getTime()
+
+            return sortOrder ===
+              'newest'
+              ? difference
+              : -difference
+          })
       },
       [
+        carrierFilter,
         shipments,
         searchTerm,
+        sortOrder,
       ],
     )
 
@@ -476,7 +554,7 @@ export function ShipmentsPage() {
             </div>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(260px,320px)_180px_190px_auto]">
             <div className="relative">
               <Search
                 size={
@@ -502,6 +580,59 @@ export function ShipmentsPage() {
                 className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm outline-none sm:w-80"
               />
             </div>
+
+            <select
+              value={
+                carrierFilter
+              }
+              onChange={(
+                event,
+              ) =>
+                setCarrierFilter(
+                  event.target.value,
+                )
+              }
+              aria-label="Filtrar embarques por carrier"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:border-emerald-500"
+            >
+              <option value="ALL">
+                Todos los carriers
+              </option>
+
+              {carrierOptions.map(
+                (carrier) => (
+                  <option
+                    key={carrier}
+                    value={carrier}
+                  >
+                    {carrier}
+                  </option>
+                ),
+              )}
+            </select>
+
+            <select
+              value={sortOrder}
+              onChange={(
+                event,
+              ) =>
+                setSortOrder(
+                  event.target.value as
+                    | 'newest'
+                    | 'oldest',
+                )
+              }
+              aria-label="Ordenar embarques por fecha"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none focus:border-emerald-500"
+            >
+              <option value="newest">
+                Más reciente primero
+              </option>
+
+              <option value="oldest">
+                Más antiguo primero
+              </option>
+            </select>
 
             <button
               type="button"

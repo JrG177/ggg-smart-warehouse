@@ -253,7 +253,13 @@ function summarizeValues(
   return `${uniqueValues.length} estados`
 }
 
-export function InventoryPage() {
+type InventoryPageProps = {
+  embedded?: boolean
+}
+
+export function InventoryPage({
+  embedded = false,
+}: InventoryPageProps) {
   const [pallets, setPallets] =
     useState<InventoryPallet[]>([])
 
@@ -262,6 +268,14 @@ export function InventoryPage() {
 
   const [searchTerm, setSearchTerm] =
     useState('')
+
+  const [carrierFilter, setCarrierFilter] =
+    useState('ALL')
+
+  const [sortOrder, setSortOrder] =
+    useState<'newest' | 'oldest'>(
+      'newest',
+    )
 
   const [loading, setLoading] =
     useState(true)
@@ -1287,6 +1301,29 @@ export function InventoryPage() {
       [pallets],
     )
 
+  const carrierOptions =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            dailyReceptionGroups.map(
+              (group) =>
+                group.carrier,
+            ),
+          ),
+        ).sort((first, second) =>
+          first.localeCompare(
+            second,
+            undefined,
+            {
+              sensitivity:
+                'base',
+            },
+          ),
+        ),
+      [dailyReceptionGroups],
+    )
+
   const filteredReceptionGroups =
     useMemo(
       () => {
@@ -1295,44 +1332,72 @@ export function InventoryPage() {
             .trim()
             .toLowerCase()
 
-        if (!search) {
-          return dailyReceptionGroups
-        }
+        return dailyReceptionGroups
+          .filter((group) => {
+            const matchesCarrier =
+              carrierFilter ===
+                'ALL' ||
+              group.carrier ===
+                carrierFilter
 
-        return dailyReceptionGroups.filter(
-          (group) =>
-            [
-              group.identifier,
-              group.carrier,
-              group.receptionDate,
-              group.trailers.join(' '),
-              group.parts
-                .map(
-                  (part) =>
-                    part.part_number,
-                )
-                .join(' '),
-              group.pallets
-                .map((pallet) => {
-                  const reception =
-                    getReception(pallet)
+            const matchesSearch =
+              !search ||
+              [
+                group.identifier,
+                group.carrier,
+                group.receptionDate,
+                group.trailers.join(' '),
+                group.parts
+                  .map(
+                    (part) =>
+                      part.part_number,
+                  )
+                  .join(' '),
+                group.pallets
+                  .map((pallet) => {
+                    const reception =
+                      getReception(pallet)
 
-                  return [
-                    reception?.reception_number || '',
-                    pallet.location_code || '',
-                  ].join(' ')
-                })
-                .join(' '),
-            ].some((value) =>
-              value
-                .toLowerCase()
-                .includes(search),
-            ),
-        )
+                    return [
+                      reception?.reception_number || '',
+                      pallet.location_code || '',
+                    ].join(' ')
+                  })
+                  .join(' '),
+              ].some((value) =>
+                value
+                  .toLowerCase()
+                  .includes(search),
+              )
+
+            return (
+              matchesCarrier &&
+              matchesSearch
+            )
+          })
+          .sort((first, second) => {
+            const dateDifference =
+              second.receptionDate.localeCompare(
+                first.receptionDate,
+              )
+
+            if (dateDifference !== 0) {
+              return sortOrder ===
+                'newest'
+                ? dateDifference
+                : -dateDifference
+            }
+
+            return first.carrier.localeCompare(
+              second.carrier,
+            )
+          })
       },
       [
+        carrierFilter,
         dailyReceptionGroups,
         searchTerm,
+        sortOrder,
       ],
     )
 
@@ -1351,19 +1416,21 @@ export function InventoryPage() {
 
   return (
     <div className="space-y-8">
-      <section>
-        <p className="text-sm text-slate-400">
-          Control de almacén
-        </p>
+      {!embedded && (
+        <section>
+          <p className="text-sm text-slate-400">
+            Control de almacén
+          </p>
 
-        <h1 className="mt-2 text-3xl font-bold text-white">
-          Inventario
-        </h1>
+          <h1 className="mt-2 text-3xl font-bold text-white">
+            Inventario
+          </h1>
 
-        <p className="mt-2 text-slate-400">
-          Consulta el material agrupado por fecha y carrier, con todos sus números de parte y controles operativos.
-        </p>
-      </section>
+          <p className="mt-2 text-slate-400">
+            Consulta el material agrupado por fecha y carrier, con todos sus números de parte y controles operativos.
+          </p>
+        </section>
+      )}
 
       {successMessage && (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-5 py-4 text-sm font-semibold text-emerald-400">
@@ -1411,7 +1478,7 @@ export function InventoryPage() {
             </p>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(260px,320px)_180px_190px_auto]">
             <div className="relative">
               <Search
                 size={18}
@@ -1429,6 +1496,53 @@ export function InventoryPage() {
                 className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm outline-none sm:w-80"
               />
             </div>
+
+            <select
+              value={carrierFilter}
+              onChange={(event) =>
+                setCarrierFilter(
+                  event.target.value,
+                )
+              }
+              aria-label="Filtrar inventario por carrier"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-emerald-500"
+            >
+              <option value="ALL">
+                Todos los carriers
+              </option>
+
+              {carrierOptions.map(
+                (carrier) => (
+                  <option
+                    key={carrier}
+                    value={carrier}
+                  >
+                    {carrier}
+                  </option>
+                ),
+              )}
+            </select>
+
+            <select
+              value={sortOrder}
+              onChange={(event) =>
+                setSortOrder(
+                  event.target.value as
+                    | 'newest'
+                    | 'oldest',
+                )
+              }
+              aria-label="Ordenar inventario por fecha"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm outline-none focus:border-emerald-500"
+            >
+              <option value="newest">
+                Más reciente primero
+              </option>
+
+              <option value="oldest">
+                Más antiguo primero
+              </option>
+            </select>
 
             <button
               type="button"
@@ -1494,7 +1608,8 @@ export function InventoryPage() {
                     colSpan={9}
                     className="px-6 py-12 text-center text-slate-500"
                   >
-                    {searchTerm
+                    {searchTerm ||
+                    carrierFilter !== 'ALL'
                       ? 'No se encontraron recepciones con esa búsqueda.'
                       : 'Todavía no hay material registrado.'}
                   </td>

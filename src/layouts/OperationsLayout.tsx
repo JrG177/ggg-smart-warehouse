@@ -5,7 +5,6 @@ import {
 
 import {
   Boxes,
-  PackagePlus,
   ReceiptText,
   ShieldAlert,
   Workflow,
@@ -13,13 +12,8 @@ import {
 
 const operationTabs = [
   {
-    name: 'Recepción',
-    path: '/operations/receiving',
-    icon: PackagePlus,
-  },
-  {
-    name: 'Inventario',
-    path: '/operations/inventory',
+    name: 'Material',
+    path: '/operations/material',
     icon: Boxes,
   },
   {
@@ -49,14 +43,14 @@ export function OperationsLayout() {
             </h1>
 
             <p className="mt-1 text-sm text-slate-400">
-              Recepción, inventario, facturación y OS&amp;D en un solo lugar.
+              Material, facturación y OS&amp;D en un solo lugar.
             </p>
           </div>
         </div>
       </section>
 
       <section className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900">
-        <div className="grid min-w-[620px] grid-cols-4">
+        <div className="grid min-w-[480px] grid-cols-3">
           {operationTabs.map(
             (tab) => {
               const Icon =

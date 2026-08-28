@@ -14,10 +14,6 @@ import {
 } from './layouts/OperationsLayout'
 
 import {
-  ReceivingPage,
-} from './features/receiving/ReceivingPage'
-
-import {
   NewReceivingPage,
 } from './features/receiving/NewReceivingPage'
 
@@ -34,8 +30,8 @@ import {
 } from './features/receiving/QuickReceivingHistoryPage'
 
 import {
-  InventoryPage,
-} from './features/inventory/InventoryPage'
+  MaterialPage,
+} from './features/material/MaterialPage'
 
 import {
   BillingPage,
@@ -72,7 +68,7 @@ function App() {
             path="/"
             element={
               <Navigate
-                to="/operations/receiving"
+                to="/operations/material"
                 replace
               />
             }
@@ -86,20 +82,35 @@ function App() {
               index
               element={
                 <Navigate
-                  to="receiving"
+                  to="material"
                   replace
                 />
               }
             />
 
             <Route
+              path="material"
+              element={<MaterialPage />}
+            />
+
+            <Route
               path="receiving"
-              element={<ReceivingPage />}
+              element={
+                <Navigate
+                  to="/operations/material?view=receiving"
+                  replace
+                />
+              }
             />
 
             <Route
               path="inventory"
-              element={<InventoryPage />}
+              element={
+                <Navigate
+                  to="/operations/material?view=inventory"
+                  replace
+                />
+              }
             />
 
             <Route
@@ -163,7 +174,7 @@ function App() {
             path="/receiving"
             element={
               <Navigate
-                to="/operations/receiving"
+                to="/operations/material?view=receiving"
                 replace
               />
             }
@@ -198,7 +209,7 @@ function App() {
             path="/inventory"
             element={
               <Navigate
-                to="/operations/inventory"
+                to="/operations/material?view=inventory"
                 replace
               />
             }

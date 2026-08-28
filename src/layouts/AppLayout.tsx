@@ -201,7 +201,7 @@ export function AppLayout() {
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-slate-800 bg-slate-900 lg:flex">
         <div className="flex h-32 items-center justify-center border-b border-slate-800 px-5 py-4">
           <NavLink
-            to="/operations/receiving"
+            to="/operations/material"
             aria-label="Ir al menú principal"
             className="flex h-full w-full items-center justify-center rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
           >
@@ -230,7 +230,7 @@ export function AppLayout() {
 
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-800 bg-slate-900/95 px-4 py-3 backdrop-blur lg:hidden">
         <NavLink
-          to="/operations/receiving"
+          to="/operations/material"
           aria-label="Ir al menú principal"
           className="rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
         >
@@ -285,7 +285,7 @@ export function AppLayout() {
       >
         <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
           <NavLink
-            to="/operations/receiving"
+            to="/operations/material"
             onClick={() => setMobileMenuOpen(false)}
             aria-label="Ir al menú principal"
             className="rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"

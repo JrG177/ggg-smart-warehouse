@@ -35,12 +35,20 @@ function formatDateTime(value: string) {
   }).format(new Date(value))
 }
 
-export function QuickReceivingHistoryPage() {
+type QuickReceivingHistoryPageProps = {
+  embedded?: boolean
+}
+
+export function QuickReceivingHistoryPage({
+  embedded = false,
+}: QuickReceivingHistoryPageProps) {
   const navigate = useNavigate()
   const [receptions, setReceptions] =
     useState<QuickReceptionHistoryItem[]>([])
   const [client, setClient] =
     useState<'ALL' | QuickReceptionClient>('ALL')
+  const [sortOrder, setSortOrder] =
+    useState<'newest' | 'oldest'>('newest')
   const [search, setSearch] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -103,31 +111,49 @@ export function QuickReceivingHistoryPage() {
   const filteredReceptions = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase()
 
-    return receptions.filter((reception) => {
-      const matchesClient = client === 'ALL' || reception.client === client
-      const matchesSearch =
-        !normalizedSearch ||
-        reception.reference_number.toLowerCase().includes(normalizedSearch) ||
-        reception.observations?.toLowerCase().includes(normalizedSearch) ||
-        reception.packages.some((item) =>
-          [
-            item.tracking_code,
-            item.part_number,
-            item.purchase_order,
-            item.supplier_code,
-            item.supplier_package_id,
-          ].some((value) =>
-            value?.toLowerCase().includes(normalizedSearch),
-          ),
-        )
+    return receptions
+      .filter((reception) => {
+        const matchesClient = client === 'ALL' || reception.client === client
+        const matchesSearch =
+          !normalizedSearch ||
+          reception.reference_number.toLowerCase().includes(normalizedSearch) ||
+          reception.observations?.toLowerCase().includes(normalizedSearch) ||
+          reception.packages.some((item) =>
+            [
+              item.tracking_code,
+              item.part_number,
+              item.purchase_order,
+              item.supplier_code,
+              item.supplier_package_id,
+            ].some((value) =>
+              value?.toLowerCase().includes(normalizedSearch),
+            ),
+          )
 
-      return matchesClient && Boolean(matchesSearch)
-    })
-  }, [client, receptions, search])
+        return matchesClient && Boolean(matchesSearch)
+      })
+      .sort((first, second) => {
+        const difference =
+          new Date(second.created_at).getTime() -
+          new Date(first.created_at).getTime()
+
+        return sortOrder === 'newest'
+          ? difference
+          : -difference
+      })
+  }, [client, receptions, search, sortOrder])
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 pb-10">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div
+      className={[
+        'space-y-5 pb-10',
+        embedded
+          ? ''
+          : 'mx-auto max-w-5xl',
+      ].join(' ')}
+    >
+      {!embedded && (
+        <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -157,9 +183,24 @@ export function QuickReceivingHistoryPage() {
           <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
           Actualizar
         </button>
-      </header>
+        </header>
+      )}
 
-      <section className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:grid-cols-[1fr_180px]">
+      {embedded && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => void loadHistory()}
+            disabled={loading}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 font-semibold text-slate-300 transition hover:bg-slate-800 disabled:opacity-60"
+          >
+            <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
+            Actualizar
+          </button>
+        </div>
+      )}
+
+      <section className="grid gap-3 rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:grid-cols-2 xl:grid-cols-[1fr_190px_210px]">
         <label className="relative">
           <Search className="absolute left-3 top-3.5 text-slate-500" size={19} />
           <input
@@ -177,9 +218,23 @@ export function QuickReceivingHistoryPage() {
           }
           className="min-h-12 rounded-xl border border-slate-700 bg-slate-950 px-4 font-semibold text-white outline-none focus:border-emerald-500"
         >
-          <option value="ALL">Todos</option>
+          <option value="ALL">Todos los carriers</option>
           <option value="UPS">UPS</option>
           <option value="A1">A1</option>
+        </select>
+
+        <select
+          value={sortOrder}
+          onChange={(event) =>
+            setSortOrder(
+              event.target.value as 'newest' | 'oldest',
+            )
+          }
+          aria-label="Ordenar recepciones rápidas por fecha"
+          className="min-h-12 rounded-xl border border-slate-700 bg-slate-950 px-4 font-semibold text-white outline-none focus:border-emerald-500"
+        >
+          <option value="newest">Más reciente primero</option>
+          <option value="oldest">Más antiguo primero</option>
         </select>
       </section>
 

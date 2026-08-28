@@ -149,7 +149,13 @@ function formatTime(
   return `${formattedHour}:${minute} ${suffix}`
 }
 
-export function ReceivingPage() {
+type ReceivingPageProps = {
+  embedded?: boolean
+}
+
+export function ReceivingPage({
+  embedded = false,
+}: ReceivingPageProps) {
   const navigate =
     useNavigate()
 
@@ -164,6 +170,20 @@ export function ReceivingPage() {
     setSearchTerm,
   ] =
     useState('')
+
+  const [
+    carrierFilter,
+    setCarrierFilter,
+  ] =
+    useState('ALL')
+
+  const [
+    sortOrder,
+    setSortOrder,
+  ] =
+    useState<'newest' | 'oldest'>(
+      'newest',
+    )
 
   const [
     loading,
@@ -585,6 +605,28 @@ export function ReceivingPage() {
       }
     }
 
+  const carrierOptions =
+    useMemo(
+      () =>
+        Array.from(
+          new Set(
+            receipts.map(
+              getCarrierName,
+            ),
+          ),
+        ).sort((first, second) =>
+          first.localeCompare(
+            second,
+            undefined,
+            {
+              sensitivity:
+                'base',
+            },
+          ),
+        ),
+      [receipts],
+    )
+
   const filteredReceipts =
     useMemo(() => {
       const normalizedSearch =
@@ -592,54 +634,78 @@ export function ReceivingPage() {
           .trim()
           .toLowerCase()
 
-      if (
-        !normalizedSearch
-      ) {
-        return receipts
-      }
-
-      return receipts.filter(
-        (
-          receipt,
-        ) => {
+      return receipts
+        .filter(
+          (
+            receipt,
+          ) => {
           const carrier =
             getCarrierName(
               receipt,
             )
 
-          return [
-            receipt.id,
-            receipt.reception_number,
-            carrier,
-            receipt.trailer,
-            receipt.status,
-            receipt.operational_status,
-            getReceptionStatusLabel(
-              receipt.status,
-            ),
-            getOperationalStatusLabel(
-              receipt.operational_status,
-            ),
-            receipt.has_discrepancy
-              ? 'discrepancia'
-              : 'sin discrepancia',
-          ].some(
-            (
-              value,
-            ) =>
-              String(
-                value,
-              )
-                .toLowerCase()
-                .includes(
-                  normalizedSearch,
+            const matchesCarrier =
+              carrierFilter ===
+                'ALL' ||
+              carrier ===
+                carrierFilter
+
+            const matchesSearch =
+              !normalizedSearch ||
+              [
+                receipt.id,
+                receipt.reception_number,
+                carrier,
+                receipt.trailer,
+                receipt.status,
+                receipt.operational_status,
+                getReceptionStatusLabel(
+                  receipt.status,
                 ),
-          )
-        },
-      )
+                getOperationalStatusLabel(
+                  receipt.operational_status,
+                ),
+                receipt.has_discrepancy
+                  ? 'discrepancia'
+                  : 'sin discrepancia',
+              ].some(
+                (
+                  value,
+                ) =>
+                  String(
+                    value,
+                  )
+                    .toLowerCase()
+                    .includes(
+                      normalizedSearch,
+                    ),
+              )
+
+            return (
+              matchesCarrier &&
+              matchesSearch
+            )
+          },
+        )
+        .sort((first, second) => {
+          const difference =
+            new Date(
+              second.created_at,
+            ).getTime() -
+            new Date(
+              first.created_at,
+            ).getTime()
+
+          return sortOrder ===
+            'newest'
+            ? difference
+            : -difference
+        })
     }, [
+      carrierFilter,
       receipts,
       searchTerm,
+      sortOrder,
     ])
 
   const completedCount =
@@ -682,8 +748,16 @@ export function ReceivingPage() {
   return (
     <div className="space-y-8">
 
-      <section className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
+      <section
+        className={[
+          'flex flex-col gap-4',
+          embedded
+            ? ''
+            : 'md:flex-row md:items-center md:justify-between',
+        ].join(' ')}
+      >
+        {!embedded && (
+          <div>
           <p className="text-sm text-slate-400">
             Operación de entrada
           </p>
@@ -695,9 +769,10 @@ export function ReceivingPage() {
           <p className="mt-2 max-w-2xl text-slate-400">
             Consulta y administra las recepciones registradas en GGG Smart Warehouse.
           </p>
-        </div>
+          </div>
+        )}
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid w-full gap-3 sm:grid-cols-3">
           <button
             onClick={() =>
               navigate(
@@ -713,7 +788,9 @@ export function ReceivingPage() {
           <button
             onClick={() =>
               navigate(
-                '/operations/receiving/quick/history',
+                embedded
+                  ? '/operations/material?view=history'
+                  : '/operations/receiving/quick/history',
               )
             }
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-5 py-3 font-semibold text-slate-300 transition hover:bg-slate-800"
@@ -822,7 +899,7 @@ export function ReceivingPage() {
             </p>
           </div>
 
-          <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-auto">
+          <div className="grid w-full gap-3 sm:grid-cols-2 xl:w-auto xl:grid-cols-[minmax(260px,320px)_180px_190px_auto]">
             <div className="relative w-full sm:w-80">
               <Search
                 size={18}
@@ -845,6 +922,59 @@ export function ReceivingPage() {
                 className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-emerald-500"
               />
             </div>
+
+            <select
+              value={
+                carrierFilter
+              }
+              onChange={(
+                event,
+              ) =>
+                setCarrierFilter(
+                  event.target.value,
+                )
+              }
+              aria-label="Filtrar recepciones por carrier"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none transition focus:border-emerald-500"
+            >
+              <option value="ALL">
+                Todos los carriers
+              </option>
+
+              {carrierOptions.map(
+                (carrier) => (
+                  <option
+                    key={carrier}
+                    value={carrier}
+                  >
+                    {carrier}
+                  </option>
+                ),
+              )}
+            </select>
+
+            <select
+              value={sortOrder}
+              onChange={(
+                event,
+              ) =>
+                setSortOrder(
+                  event.target.value as
+                    | 'newest'
+                    | 'oldest',
+                )
+              }
+              aria-label="Ordenar recepciones por fecha"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none transition focus:border-emerald-500"
+            >
+              <option value="newest">
+                Más reciente primero
+              </option>
+
+              <option value="oldest">
+                Más antiguo primero
+              </option>
+            </select>
 
             <button
               type="button"
@@ -950,7 +1080,8 @@ export function ReceivingPage() {
                     }
                     className="px-6 py-12 text-center text-sm text-slate-500"
                   >
-                    {searchTerm
+                    {searchTerm ||
+                    carrierFilter !== 'ALL'
                       ? 'No se encontraron recepciones con esa búsqueda.'
                       : 'Todavía no hay recepciones registradas.'}
                   </td>
