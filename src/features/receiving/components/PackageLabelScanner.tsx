@@ -4,14 +4,11 @@ import {
   useRef,
   useState,
 } from 'react'
-import {
-  BarcodeFormat,
-  BrowserMultiFormatReader,
-  type IScannerControls,
-} from '@zxing/browser'
+import { prepareZXingModule, readBarcodes } from 'zxing-wasm/reader'
 import {
   Barcode,
   Check,
+  ImageUp,
   LoaderCircle,
   RotateCcw,
   ScanBarcode,
@@ -46,6 +43,18 @@ const EMPTY_DRAFT: PackageDraft = {
   supplierPackageType: '',
   rawCodes: {},
 }
+
+const SCAN_INTERVAL_MS = 220
+const REQUIRED_MATCHES = 2
+const SUPPORTED_FORMATS = ['Code39', 'Code128', 'PDF417'] as const
+
+prepareZXingModule({
+  overrides: {
+    locateFile: (path: string, prefix: string) => path.endsWith('.wasm')
+      ? '/zxing_reader.wasm'
+      : `${prefix}${path}`,
+  },
+})
 
 const fieldLabels: Record<ScanField, string> = {
   P: 'número de parte',
@@ -158,16 +167,60 @@ function applyScan(
   return next
 }
 
+function enhanceImageData(imageData: ImageData) {
+  const enhanced = new ImageData(
+    new Uint8ClampedArray(imageData.data),
+    imageData.width,
+    imageData.height,
+  )
+  const data = enhanced.data
+
+  for (let index = 0; index < data.length; index += 4) {
+    const gray = (data[index] * 0.299) + (data[index + 1] * 0.587) + (data[index + 2] * 0.114)
+    const contrasted = Math.max(0, Math.min(255, ((gray - 128) * 1.55) + 128))
+    data[index] = contrasted
+    data[index + 1] = contrasted
+    data[index + 2] = contrasted
+  }
+
+  return enhanced
+}
+
+async function decodeImage(imageData: ImageData) {
+  const options = {
+    formats: [...SUPPORTED_FORMATS],
+    tryHarder: true,
+    tryRotate: true,
+    tryInvert: true,
+    tryDownscale: true,
+    maxNumberOfSymbols: 8,
+    minLineCount: 2,
+  }
+  const original = await readBarcodes(imageData, options)
+
+  if (original.length > 0) return original
+
+  return readBarcodes(enhanceImageData(imageData), {
+    ...options,
+    binarizer: 'GlobalHistogram',
+  })
+}
+
 export function PackageLabelScanner({
   onClose,
   onSave,
 }: PackageLabelScannerProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const controlsRef = useRef<IScannerControls | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
   const draftRef = useRef<PackageDraft>(EMPTY_DRAFT)
   const lastScanRef = useRef({ value: '', time: 0 })
+  const candidateRef = useRef({ value: '', matches: 0, time: 0 })
+  const externalScanRef = useRef({ value: '', time: 0 })
   const [draft, setDraft] = useState<PackageDraft>(EMPTY_DRAFT)
   const [cameraStatus, setCameraStatus] = useState<'starting' | 'ready' | 'error'>('starting')
+  const [photoBusy, setPhotoBusy] = useState(false)
   const [scanTarget, setScanTarget] = useState<ScanTarget>('P')
   const scanTargetRef = useRef<ScanTarget>('P')
   const [message, setMessage] = useState('Seleccionado P: apunta solamente al código del número de parte.')
@@ -226,40 +279,115 @@ export function PackageLabelScanner({
     }
   }, [updateDraft])
 
+  const confirmRawScan = useCallback((rawValue: string, immediate = false) => {
+    const cleaned = cleanRawCode(rawValue)
+    if (!cleaned) return
+
+    if (immediate) {
+      candidateRef.current = { value: '', matches: 0, time: 0 }
+      handleRawScan(cleaned)
+      return
+    }
+
+    const now = Date.now()
+    const candidate = candidateRef.current
+    const matches = candidate.value === cleaned && now - candidate.time < 1800
+      ? candidate.matches + 1
+      : 1
+    candidateRef.current = { value: cleaned, matches, time: now }
+
+    if (matches >= REQUIRED_MATCHES) {
+      candidateRef.current = { value: '', matches: 0, time: 0 }
+      handleRawScan(cleaned)
+    }
+  }, [handleRawScan])
+
   useEffect(() => {
     let cancelled = false
-    const reader = new BrowserMultiFormatReader()
-    reader.possibleFormats = [
-      BarcodeFormat.CODE_39,
-      BarcodeFormat.CODE_128,
-      BarcodeFormat.PDF_417,
-    ]
+    let scanning = false
+    let timer = 0
 
-    void reader
-      .decodeFromConstraints(
-        {
-          audio: false,
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-          },
-        },
-        videoRef.current || undefined,
-        (result) => {
-          if (result && !cancelled) {
-            handleRawScan(result.getText())
-          }
-        },
+    async function scanFrame() {
+      if (cancelled || scanning) return
+      const video = videoRef.current
+      const canvas = canvasRef.current
+
+      if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+
+      const sourceWidth = video.videoWidth
+      const sourceHeight = video.videoHeight
+      if (!sourceWidth || !sourceHeight) return
+
+      // The visible guide is a real scan area: keep the full width needed by long 1D codes.
+      const cropX = Math.round(sourceWidth * 0.03)
+      const cropY = Math.round(sourceHeight * 0.34)
+      const cropWidth = Math.round(sourceWidth * 0.94)
+      const cropHeight = Math.round(sourceHeight * 0.32)
+      canvas.width = cropWidth
+      canvas.height = cropHeight
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      if (!context) return
+
+      context.drawImage(
+        video,
+        cropX,
+        cropY,
+        cropWidth,
+        cropHeight,
+        0,
+        0,
+        cropWidth,
+        cropHeight,
       )
-      .then((controls) => {
+
+      scanning = true
+      try {
+        const results = await decodeImage(context.getImageData(0, 0, cropWidth, cropHeight))
+        const matching = results.find(({ text }) => {
+          try {
+            return targetMatchesField(scanTargetRef.current, parseLabelCode(text).field)
+          } catch {
+            return false
+          }
+        })
+        if (matching && !cancelled) confirmRawScan(matching.text)
+      } finally {
+        scanning = false
+      }
+    }
+
+    void navigator.mediaDevices
+      .getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+      })
+      .then(async (stream) => {
         if (cancelled) {
-          controls.stop()
+          stream.getTracks().forEach((track) => track.stop())
           return
         }
 
-        controlsRef.current = controls
+        streamRef.current = stream
+        const video = videoRef.current
+        if (!video) return
+        video.srcObject = stream
+        await video.play()
+
+        const track = stream.getVideoTracks()[0]
+        try {
+          await track.applyConstraints({
+            advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet],
+          })
+        } catch {
+          // Some iPhones and older Android cameras do not expose focus controls.
+        }
+
         setCameraStatus('ready')
+        timer = window.setInterval(() => void scanFrame(), SCAN_INTERVAL_MS)
       })
       .catch((error) => {
         if (cancelled) return
@@ -275,10 +403,41 @@ export function PackageLabelScanner({
 
     return () => {
       cancelled = true
-      controlsRef.current?.stop()
-      controlsRef.current = null
+      window.clearInterval(timer)
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
     }
-  }, [handleRawScan])
+  }, [confirmRawScan])
+
+  useEffect(() => {
+    function handleExternalScanner(event: KeyboardEvent) {
+      const element = event.target as HTMLElement | null
+      const isEditing = element?.tagName === 'INPUT' || element?.tagName === 'TEXTAREA' || element?.tagName === 'SELECT'
+      if (isEditing) return
+
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        const value = externalScanRef.current.value
+        externalScanRef.current = { value: '', time: 0 }
+        if (value) {
+          event.preventDefault()
+          confirmRawScan(value, true)
+        }
+        return
+      }
+
+      if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return
+      const now = Date.now()
+      externalScanRef.current = {
+        value: now - externalScanRef.current.time > 120
+          ? event.key
+          : externalScanRef.current.value + event.key,
+        time: now,
+      }
+    }
+
+    window.addEventListener('keydown', handleExternalScanner)
+    return () => window.removeEventListener('keydown', handleExternalScanner)
+  }, [confirmRawScan])
 
   function setField<Key extends keyof PackageDraft>(
     key: Key,
@@ -293,12 +452,54 @@ export function PackageLabelScanner({
     setMessage(`Seleccionado ${target === 'PACKAGE' ? '3S/4S' : target}. Apunta solamente a ese código.`)
     setMessageType('neutral')
     lastScanRef.current = { value: '', time: 0 }
+    candidateRef.current = { value: '', matches: 0, time: 0 }
   }
 
   function clearLabel() {
     updateDraft({ ...EMPTY_DRAFT, rawCodes: {} })
     selectScanTarget('P')
     setMessage('Nueva label lista. Comienza escaneando el código P.')
+  }
+
+  async function scanPhoto(file: File) {
+    setPhotoBusy(true)
+    setMessage('Analizando fotografía en alta resolución…')
+    setMessageType('neutral')
+
+    try {
+      const bitmap = await createImageBitmap(file)
+      const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height))
+      const width = Math.max(1, Math.round(bitmap.width * scale))
+      const height = Math.max(1, Math.round(bitmap.height * scale))
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const context = canvas.getContext('2d', { willReadFrequently: true })
+      if (!context) throw new Error('No se pudo preparar la fotografía.')
+      context.drawImage(bitmap, 0, 0, width, height)
+      bitmap.close()
+
+      const results = await decodeImage(context.getImageData(0, 0, width, height))
+      const matching = results.find(({ text }) => {
+        try {
+          return targetMatchesField(scanTargetRef.current, parseLabelCode(text).field)
+        } catch {
+          return false
+        }
+      })
+
+      if (!matching) {
+        throw new Error(`No encontré ${scanTargetRef.current === 'PACKAGE' ? '3S/4S' : scanTargetRef.current} en la foto. Acércate, evita reflejos e incluye los márgenes blancos del código.`)
+      }
+
+      confirmRawScan(matching.text, true)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo leer la fotografía.')
+      setMessageType('error')
+    } finally {
+      setPhotoBusy(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
   }
 
   function savePackage() {
@@ -367,6 +568,7 @@ export function PackageLabelScanner({
               className="aspect-[4/3] w-full object-cover"
             />
             <div className="pointer-events-none absolute inset-x-[8%] top-1/2 h-24 -translate-y-1/2 rounded-xl border-2 border-emerald-400 shadow-[0_0_0_999px_rgba(2,6,23,0.48)]" />
+            <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
             {cameraStatus === 'starting' && (
               <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 text-slate-300">
                 <LoaderCircle className="mr-2 animate-spin" size={22} />
@@ -374,6 +576,28 @@ export function PackageLabelScanner({
               </div>
             )}
           </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0]
+              if (file) void scanPhoto(file)
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={photoBusy}
+            className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 text-sm font-semibold text-slate-300 disabled:opacity-60"
+          >
+            {photoBusy ? <LoaderCircle className="animate-spin" size={18} /> : <ImageUp size={18} />}
+            {photoBusy ? 'Analizando foto…' : 'Tomar foto para código difícil'}
+          </button>
 
           <div className={[
             'mt-3 rounded-xl border px-3 py-2.5 text-sm font-semibold',
@@ -516,7 +740,7 @@ export function PackageLabelScanner({
 
           <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-slate-500">
             <Barcode className="mt-0.5 shrink-0" size={16} />
-            La cámara puede ver varios códigos a la vez. La app guardará únicamente el tipo seleccionado para evitar mezclar labels. Puedes corregir cualquier campo manualmente.
+            Motor ZXing-C++ de alta precisión. Solo se analiza el área verde y se confirma cada lectura dos veces. También acepta lectores Zebra, Bluetooth o USB configurados para enviar Enter. Puedes corregir cualquier campo manualmente.
           </p>
         </div>
       </div>
