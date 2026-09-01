@@ -250,57 +250,133 @@ async function uploadPhotoCollection(
   }
 }
 
+type CreateReceptionRpcResult = {
+  reception_id: string
+  pallets: Array<{
+    pallet_number: number
+    pallet_id: string
+  }>
+}
+
 export async function createReception(
   input: ReceptionInput,
 ) {
   const carrierName =
     input.carrier === 'Other'
-      ? input.otherCarrier
-      : input.carrier
+      ? input.otherCarrier.trim()
+      : input.carrier.trim()
+
+  const receptionPayload = {
+    carrier: carrierName,
+
+    other_carrier:
+      input.carrier === 'Other'
+        ? input.otherCarrier.trim()
+        : null,
+
+    trailer:
+      input.trailer.trim(),
+
+    seal:
+      input.seal.trim() || null,
+
+    reception_date:
+      input.receptionDate,
+
+    reception_time:
+      input.receptionTime,
+
+    status:
+      'completed',
+  }
+
+  const palletsPayload =
+    input.pallets.map(
+      (pallet) => ({
+        packing_list_reference:
+          pallet.documents
+            .packingListReference
+            .trim() ||
+          null,
+
+        invoice:
+          pallet.documents
+            .invoice
+            .trim() ||
+          null,
+
+        damaged:
+          pallet.damaged === 'Sí',
+
+        notes:
+          pallet.notes.trim() ||
+          null,
+
+        documentation_complete:
+          pallet.documents
+            .documentationComplete ===
+          'Sí',
+
+        completed:
+          pallet.completed,
+
+        parts:
+          pallet.parts.map(
+            (part) => ({
+              part_number:
+                part.partNumber.trim(),
+
+              quantity:
+                part.quantity.trim(),
+
+              packages:
+                part.packages.trim(),
+
+              pallet_ref:
+                part.palletReference
+                  .trim() ||
+                null,
+            }),
+          ),
+      }),
+    )
 
   const {
-    data: reception,
-    error: receptionError,
-  } = await supabase
-    .from('receptions')
-    .insert({
-      carrier:
-        carrierName,
+    data,
+    error,
+  } = await supabase.rpc(
+    'create_complete_reception',
+    {
+      p_reception:
+        receptionPayload,
 
-      other_carrier:
-        input.carrier === 'Other'
-          ? input.otherCarrier
-          : null,
+      p_pallets:
+        palletsPayload,
+    },
+  )
 
-      trailer:
-        input.trailer,
-
-      pallet_count:
-        Number(
-          input.palletCount,
-        ),
-
-      seal:
-        input.seal ||
-        null,
-
-      reception_date:
-        input.receptionDate,
-
-      reception_time:
-        input.receptionTime,
-
-      status:
-        'completed',
-    })
-    .select()
-    .single()
-
-  if (receptionError) {
+  if (error) {
     throw new Error(
-      `Error creando recepción: ${receptionError.message}`,
+      `Error guardando recepción: ${error.message}`,
     )
   }
+
+  const result =
+    data as CreateReceptionRpcResult
+
+  if (
+    !result?.reception_id ||
+    !Array.isArray(
+      result.pallets,
+    )
+  ) {
+    throw new Error(
+      'Supabase no devolvió correctamente la recepción guardada.',
+    )
+  }
+
+  const photoWarnings:
+    string[] = []
 
   for (
     let palletIndex = 0;
@@ -313,154 +389,83 @@ export async function createReception(
         palletIndex
       ]
 
-    const {
-      data:
-        savedPallet,
-
-      error:
-        palletError,
-    } = await supabase
-      .from('pallets')
-      .insert({
-        reception_id:
-          reception.id,
-
-        pallet_number:
+    const savedPallet =
+      result.pallets.find(
+        (item) =>
+          item.pallet_number ===
           palletIndex + 1,
-
-        packing_list_reference:
-          pallet
-            .documents
-            .packingListReference ||
-          null,
-
-        invoice:
-          pallet
-            .documents
-            .invoice ||
-          null,
-
-        damaged:
-          pallet.damaged ===
-          'Sí',
-
-        notes:
-          pallet.notes ||
-          null,
-
-        documentation_complete:
-          pallet
-            .documents
-            .documentationComplete ===
-          'Sí',
-
-        completed:
-          pallet.completed,
-      })
-      .select()
-      .single()
-
-    if (palletError) {
-      throw new Error(
-        `Error creando pallet ${palletIndex + 1}: ${palletError.message}`,
       )
+
+    if (!savedPallet) {
+      photoWarnings.push(
+        `No se encontró el ID del pallet ${palletIndex + 1} para subir sus fotos.`,
+      )
+
+      continue
     }
 
-    const partsToInsert =
-      pallet.parts.map(
-        (part) => ({
-          pallet_id:
-            savedPallet.id,
+    const uploadSafely =
+      async (
+        photoType:
+          PhotoType,
 
-          part_number:
-            part.partNumber,
+        photos:
+          PhotoInput[],
+      ) => {
+        if (
+          photos.length ===
+          0
+        ) {
+          return
+        }
 
-          quantity:
-            Number(
-              part.quantity,
-            ),
+        try {
+          await uploadPhotoCollection(
+            result.reception_id,
+            savedPallet.pallet_id,
+            photoType,
+            photos,
+          )
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Error desconocido'
 
-          boxes:
-            part.boxes ===
-            ''
-              ? null
-              : Number(
-                  part.boxes,
-                ),
+          photoWarnings.push(
+            `Pallet ${palletIndex + 1}, ${photoType}: ${message}`,
+          )
+        }
+      }
 
-          packages:
-            part.packages ===
-            ''
-              ? null
-              : Number(
-                  part.packages,
-                ),
-
-          pallet_ref:
-            part.palletReference
-              .trim() ||
-            null,
-        }),
-      )
-
-    const {
-      error:
-        partsError,
-    } = await supabase
-      .from(
-        'pallet_parts',
-      )
-      .insert(
-        partsToInsert,
-      )
-
-    if (partsError) {
-      throw new Error(
-        `Error guardando números de parte del pallet ${palletIndex + 1}: ${partsError.message}`,
-      )
-    }
-
-    await uploadPhotoCollection(
-      reception.id,
-      savedPallet.id,
+    await uploadSafely(
       'packing_list',
       pallet.photos
         .packingList,
     )
 
-    await uploadPhotoCollection(
-      reception.id,
-      savedPallet.id,
+    await uploadSafely(
       'pallet_label',
       pallet.photos
         .palletLabel,
     )
 
-    await uploadPhotoCollection(
-      reception.id,
-      savedPallet.id,
+    await uploadSafely(
       'pallet_photo',
       pallet.photos
         .palletPhoto,
     )
 
-    await uploadPhotoCollection(
-      reception.id,
-      savedPallet.id,
+    await uploadSafely(
       'bol',
       pallet.photos.bol,
     )
 
     if (
       pallet.damaged ===
-        'Sí' &&
-      pallet.photos
-        .damage.length >
-        0
+        'Sí'
     ) {
-      await uploadPhotoCollection(
-        reception.id,
-        savedPallet.id,
+      await uploadSafely(
         'damage',
         pallet.photos
           .damage,
@@ -468,7 +473,45 @@ export async function createReception(
     }
   }
 
-  return reception
+  if (
+    photoWarnings.length >
+    0
+  ) {
+    console.warn(
+      'La recepción se guardó, pero algunas evidencias no pudieron subirse:',
+      photoWarnings,
+    )
+  }
+
+  const {
+    data:
+      savedReception,
+
+    error:
+      savedReceptionError,
+  } = await supabase
+    .from('receptions')
+    .select('*')
+    .eq(
+      'id',
+      result.reception_id,
+    )
+    .single()
+
+  if (
+    savedReceptionError
+  ) {
+    throw new Error(
+      `La recepción se guardó, pero no pudo recuperarse: ${savedReceptionError.message}`,
+    )
+  }
+
+  return {
+    ...savedReception,
+
+    photo_upload_warnings:
+      photoWarnings,
+  }
 }
 
 async function addSignedUrls(

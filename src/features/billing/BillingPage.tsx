@@ -5,18 +5,40 @@ import {
 } from 'react'
 
 import {
+  ArrowLeft,
+  ArrowRight,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
   FileImage,
+  FileSpreadsheet,
+  FileText,
+  ImagePlus,
   Pencil,
+  Plus,
   RefreshCcw,
   Search,
+  Trash2,
   X,
 } from 'lucide-react'
 
 import { supabase } from '../../lib/supabase'
+
+import {
+  addInvoicePhotos,
+  createInvoiceWithReceptions,
+  deleteInvoicePhoto,
+  getAvailableInvoiceReceptions,
+  getInvoicePhotos,
+  updateInvoiceWithReceptions,
+  type AvailableInvoiceReception,
+  type InvoicePhoto,
+} from '../../services/invoiceService'
+import type { InvoiceImportData } from '../../types/invoiceImport'
+
+import { EditInvoiceModal } from './components/EditInvoiceModal'
+import { InvoiceCsvImportSection } from './components/InvoiceCsvImportSection'
 
 type InvoicePartCheck = {
   id: string
@@ -134,6 +156,47 @@ type Invoice = {
   created_at: string
   invoice_receptions:
     InvoiceReception[]
+  invoice_imports:
+    | InvoiceImportRecord
+    | InvoiceImportRecord[]
+    | null
+  invoice_source_documents: InvoiceSourceDocumentRecord[]
+}
+
+type InvoiceImportLineRecord = {
+  id: string
+  line_number: number
+  part_number: string
+  description: string | null
+  commercial_quantity: number
+  weight: number
+  unit_price: number
+  total_price: number
+}
+
+type InvoiceImportRecord = {
+  invoice_id: string
+  source_file_name: string
+  raw_invoice_identifier: string
+  invoice_date: string | null
+  fiscal_week: number | null
+  currency: string
+  invoice_total: number
+  total_quantity: number
+  total_weight: number
+  package_count: number
+  container_number: string | null
+  customs_entry: string | null
+  invoice_import_lines: InvoiceImportLineRecord[]
+}
+
+type InvoiceSourceDocumentRecord = {
+  id: string
+  invoice_id: string
+  file_name: string
+  storage_path: string
+  mime_type: string
+  document_type: 'csv' | 'evidence'
 }
 
 function getReception(
@@ -149,6 +212,16 @@ function getReception(
     ? item.receptions[0] ||
         null
     : item.receptions
+}
+
+function getInvoiceImport(invoice: Invoice) {
+  if (!invoice.invoice_imports) {
+    return null
+  }
+
+  return Array.isArray(invoice.invoice_imports)
+    ? invoice.invoice_imports[0] || null
+    : invoice.invoice_imports
 }
 
 function getCarrier(
@@ -213,6 +286,96 @@ function getReceptionSummary(
   }
 }
 
+function updateInvoicePartReviewedState(
+  invoices: Invoice[],
+  invoiceId: string,
+  partId: string,
+  reviewed: boolean,
+) {
+  const updatePart = (
+    part: Part,
+  ): Part => {
+    if (part.id !== partId) {
+      return part
+    }
+
+    const existingCheck =
+      part.invoice_part_checks.find(
+        (check) =>
+          check.invoice_id === invoiceId,
+      )
+
+    return {
+      ...part,
+      invoice_part_checks:
+        existingCheck
+          ? part.invoice_part_checks.map(
+              (check) =>
+                check.invoice_id === invoiceId
+                  ? {
+                      ...check,
+                      reviewed,
+                    }
+                  : check,
+            )
+          : [
+              ...part.invoice_part_checks,
+              {
+                id: `local-${invoiceId}-${partId}`,
+                invoice_id: invoiceId,
+                pallet_part_id: partId,
+                reviewed,
+              },
+            ],
+    }
+  }
+
+  const updateReception = (
+    reception: Reception,
+  ): Reception => ({
+    ...reception,
+    pallets: reception.pallets.map(
+      (pallet) => ({
+        ...pallet,
+        pallet_parts:
+          pallet.pallet_parts.map(
+            updatePart,
+          ),
+      }),
+    ),
+  })
+
+  return invoices.map(
+    (invoice) => {
+      if (invoice.id !== invoiceId) {
+        return invoice
+      }
+
+      return {
+        ...invoice,
+        invoice_receptions:
+          invoice.invoice_receptions.map(
+            (item) => ({
+              ...item,
+              receptions:
+                Array.isArray(
+                  item.receptions,
+                )
+                  ? item.receptions.map(
+                      updateReception,
+                    )
+                  : item.receptions
+                    ? updateReception(
+                        item.receptions,
+                      )
+                    : null,
+            }),
+          ),
+      }
+    },
+  )
+}
+
 export function BillingPage() {
   const [invoices, setInvoices] =
     useState<Invoice[]>([])
@@ -260,6 +423,11 @@ export function BillingPage() {
     useState('')
 
   const [
+    savingPartChecks,
+    setSavingPartChecks,
+  ] = useState<Record<string, boolean>>({})
+
+  const [
     invoiceViewerOpen,
     setInvoiceViewerOpen,
   ] = useState(false)
@@ -304,17 +472,139 @@ export function BillingPage() {
     setEditPackageCount,
   ] = useState('')
 
-  const [
-    savingInvoice,
-    setSavingInvoice,
-  ] = useState(false)
+const [
+  savingInvoice,
+  setSavingInvoice,
+] = useState(false)
 
-  const [
-    successMessage,
-    setSuccessMessage,
-  ] = useState('')
+const [
+  editAvailableReceptions,
+  setEditAvailableReceptions,
+] = useState<
+  AvailableInvoiceReception[]
+>([])
 
-  const loadInvoices =
+const [
+  editSelectedReceptionIds,
+  setEditSelectedReceptionIds,
+] = useState<string[]>([])
+
+const [
+  editReceptionSearch,
+  setEditReceptionSearch,
+] = useState('')
+
+const [
+  editLoadingReceptions,
+  setEditLoadingReceptions,
+] = useState(false)
+
+const [
+  editInvoicePhotos,
+  setEditInvoicePhotos,
+] = useState<InvoicePhoto[]>([])
+
+const [
+  editNewPhotos,
+  setEditNewPhotos,
+] = useState<File[]>([])
+
+const [
+  editLoadingPhotos,
+  setEditLoadingPhotos,
+] = useState(false)
+
+const [
+  deletingPhotoId,
+  setDeletingPhotoId,
+] = useState<string | null>(null)
+
+const [
+  successMessage,
+  setSuccessMessage,
+] = useState('')
+
+const [
+  newInvoiceOpen,
+  setNewInvoiceOpen,
+] = useState(false)
+
+const [
+  newInvoiceMode,
+  setNewInvoiceMode,
+] = useState<'manual' | 'csv'>('manual')
+
+const [
+  newInvoiceImportData,
+  setNewInvoiceImportData,
+] = useState<InvoiceImportData | null>(null)
+
+const [
+  newInvoiceCsvFile,
+  setNewInvoiceCsvFile,
+] = useState<File | null>(null)
+
+const [
+  newInvoiceEvidenceFiles,
+  setNewInvoiceEvidenceFiles,
+] = useState<File[]>([])
+
+const [
+  newInvoiceStep,
+  setNewInvoiceStep,
+] = useState<1 | 2>(1)
+
+const [
+  newInvoiceCarrier,
+  setNewInvoiceCarrier,
+] = useState('XPO')
+
+const [
+  newInvoiceNumber,
+  setNewInvoiceNumber,
+] = useState('')
+
+const [
+  newInvoicePackageCount,
+  setNewInvoicePackageCount,
+] = useState('')
+
+const [
+  newInvoicePhotos,
+  setNewInvoicePhotos,
+] = useState<File[]>([])
+
+const [
+  availableReceptions,
+  setAvailableReceptions,
+] = useState<AvailableInvoiceReception[]>([])
+
+const [
+  selectedReceptionIds,
+  setSelectedReceptionIds,
+] = useState<string[]>([])
+
+const [
+  loadingAvailableReceptions,
+  setLoadingAvailableReceptions,
+] = useState(false)
+
+const [
+  creatingInvoice,
+  setCreatingInvoice,
+] = useState(false)
+
+const [
+  expandedInvoiceImports,
+  setExpandedInvoiceImports,
+] = useState<Record<string, boolean>>({})
+
+const [
+  openingSourceDocumentId,
+  setOpeningSourceDocumentId,
+] = useState<string | null>(null)
+
+const loadInvoices =
     async (
       showRefresh = false,
     ) => {
@@ -407,6 +697,38 @@ export function BillingPage() {
           status,
           completed_at,
           created_at,
+          invoice_imports (
+            invoice_id,
+            source_file_name,
+            raw_invoice_identifier,
+            invoice_date,
+            fiscal_week,
+            currency,
+            invoice_total,
+            total_quantity,
+            total_weight,
+            package_count,
+            container_number,
+            customs_entry,
+            invoice_import_lines (
+              id,
+              line_number,
+              part_number,
+              description,
+              commercial_quantity,
+              weight,
+              unit_price,
+              total_price
+            )
+          ),
+          invoice_source_documents (
+            id,
+            invoice_id,
+            file_name,
+            storage_path,
+            mime_type,
+            document_type
+          ),
           invoice_receptions (
             id,
             reception_id,
@@ -463,6 +785,141 @@ export function BillingPage() {
     void loadInvoices()
   }, [statusTab])
 
+  const filteredEditReceptions =
+  useMemo(
+    () => {
+      const search =
+        editReceptionSearch
+          .trim()
+          .toLowerCase()
+
+      if (!search) {
+        return editAvailableReceptions
+      }
+
+      return editAvailableReceptions.filter(
+        (
+          reception,
+        ) =>
+          [
+            reception.reception_number ||
+              '',
+            reception.trailer ||
+              '',
+            reception.carrier ||
+              '',
+            reception.other_carrier ||
+              '',
+            ...reception.part_numbers,
+          ].some(
+            (
+              value,
+            ) =>
+              value
+                .toLowerCase()
+                .includes(
+                  search,
+                ),
+          ),
+      )
+    },
+    [
+      editAvailableReceptions,
+      editReceptionSearch,
+    ],
+  )
+
+const editSelectedReceptions =
+  useMemo(
+    () =>
+      editAvailableReceptions.filter(
+        (
+          reception,
+        ) =>
+          editSelectedReceptionIds.includes(
+            reception.id,
+          ),
+      ),
+    [
+      editAvailableReceptions,
+      editSelectedReceptionIds,
+    ],
+  )
+
+const editInvoiceSummary =
+  useMemo(
+    () => {
+      const totalPallets =
+        editSelectedReceptions.reduce(
+          (
+            total,
+            reception,
+          ) =>
+            total +
+            Number(
+              reception.pallet_count ||
+                0,
+            ),
+          0,
+        )
+
+      const totalQuantity =
+        editSelectedReceptions.reduce(
+          (
+            total,
+            reception,
+          ) =>
+            total +
+            Number(
+              reception.total_quantity ||
+                0,
+            ),
+          0,
+        )
+
+      const totalPackages =
+        editSelectedReceptions.reduce(
+          (
+            total,
+            reception,
+          ) =>
+            total +
+            Number(
+              reception.total_packages ||
+                0,
+            ),
+          0,
+        )
+
+      const partNumbers =
+        Array.from(
+          new Set(
+            editSelectedReceptions.flatMap(
+              (
+                reception,
+              ) =>
+                reception.part_numbers,
+            ),
+          ),
+        )
+
+      return {
+        receptionCount:
+          editSelectedReceptions.length,
+
+        totalPallets,
+        totalQuantity,
+        totalPackages,
+
+        partNumberCount:
+          partNumbers.length,
+      }
+    },
+    [
+      editSelectedReceptions,
+    ],
+  )
+
   const filteredInvoices =
     useMemo(
       () => {
@@ -476,10 +933,17 @@ export function BillingPage() {
         }
 
         return invoices.filter(
-          (invoice) =>
-            [
+          (invoice) => {
+            const imported = getInvoiceImport(invoice)
+
+            return [
               invoice.invoice_number,
               invoice.carrier,
+              imported?.container_number || '',
+              imported?.customs_entry || '',
+              ...(imported?.invoice_import_lines || []).map(
+                (line) => line.part_number,
+              ),
               ...invoice.invoice_receptions.map(
                 (item) =>
                   getReception(item)
@@ -491,7 +955,8 @@ export function BillingPage() {
                 value
                   .toLowerCase()
                   .includes(search),
-            ),
+            )
+          },
         )
       },
       [
@@ -512,202 +977,742 @@ export function BillingPage() {
         }),
       )
     }
-  const openEditInvoice = (
-    invoice: Invoice,
-  ) => {
+
+    const resetNewInvoiceForm =
+  () => {
+    setNewInvoiceOpen(false)
+    setNewInvoiceMode('manual')
+    setNewInvoiceStep(1)
+    setNewInvoiceCarrier('XPO')
+    setNewInvoiceNumber('')
+    setNewInvoicePackageCount('')
+    setNewInvoicePhotos([])
+    setNewInvoiceImportData(null)
+    setNewInvoiceCsvFile(null)
+    setNewInvoiceEvidenceFiles([])
+    setAvailableReceptions([])
+    setSelectedReceptionIds([])
+    setLoadingAvailableReceptions(false)
+    setCreatingInvoice(false)
+  }
+
+const openNewInvoice =
+  (mode: 'manual' | 'csv' = 'manual') => {
     setError('')
     setSuccessMessage('')
-    setEditingInvoice(invoice)
-    setEditInvoiceNumber(
-      invoice.invoice_number,
-    )
-    setEditCarrier(
-      invoice.carrier,
-    )
-    setEditPackageCount(
-      String(
-        invoice.package_count ??
-          0,
-      ),
+    setNewInvoiceOpen(true)
+    setNewInvoiceMode(mode)
+    setNewInvoiceStep(1)
+    setNewInvoiceCarrier('XPO')
+    setNewInvoiceNumber('')
+    setNewInvoicePackageCount('')
+    setNewInvoicePhotos([])
+    setNewInvoiceImportData(null)
+    setNewInvoiceCsvFile(null)
+    setNewInvoiceEvidenceFiles([])
+    setAvailableReceptions([])
+    setSelectedReceptionIds([])
+  }
+
+const closeNewInvoice =
+  () => {
+    if (
+      creatingInvoice ||
+      loadingAvailableReceptions
+    ) {
+      return
+    }
+
+    resetNewInvoiceForm()
+  }
+
+const handleInvoiceCsvImported =
+  (data: InvoiceImportData, file: File) => {
+    setNewInvoiceImportData(data)
+    setNewInvoiceCsvFile(file)
+    setNewInvoiceNumber(data.invoiceNumber)
+    setNewInvoicePackageCount(String(data.packageCount))
+    setError('')
+  }
+
+const clearInvoiceCsvImport =
+  () => {
+    setNewInvoiceImportData(null)
+    setNewInvoiceCsvFile(null)
+    setNewInvoiceNumber('')
+    setNewInvoicePackageCount('')
+  }
+
+const continueToReceptionSelection =
+  async () => {
+    const invoiceNumber =
+      newInvoiceNumber
+        .trim()
+        .toUpperCase()
+        .replace(/^INV-/, '')
+
+    const packageCount =
+      Number(
+        newInvoicePackageCount,
+      )
+
+    if (!invoiceNumber) {
+      setError(
+        'Captura el número de factura.',
+      )
+      return
+    }
+
+    if (
+      !Number.isInteger(
+        packageCount,
+      ) ||
+      packageCount < 0
+    ) {
+      setError(
+        'Captura un número de bultos válido.',
+      )
+      return
+    }
+
+    if (
+      newInvoiceMode === 'manual' &&
+      newInvoicePhotos.length === 0
+    ) {
+      setError(
+        'Agrega al menos una fotografía de la factura.',
+      )
+      return
+    }
+
+    if (
+      newInvoiceMode === 'csv' &&
+      (!newInvoiceImportData || !newInvoiceCsvFile)
+    ) {
+      setError('Selecciona y valida el archivo CSV de la factura.')
+      return
+    }
+
+    if (
+      newInvoiceMode === 'csv' &&
+      newInvoiceImportData &&
+      !newInvoiceImportData.valid
+    ) {
+      setError('Los totales del CSV no coinciden. Corrige el archivo antes de continuar.')
+      return
+    }
+
+    if (
+      newInvoiceMode === 'csv' &&
+      newInvoiceImportData &&
+      packageCount !== newInvoiceImportData.packageCount
+    ) {
+      setError('El número de bultos debe coincidir con el total leído del CSV.')
+      return
+    }
+
+    try {
+      setError('')
+      setLoadingAvailableReceptions(
+        true,
+      )
+      setSelectedReceptionIds([])
+
+      const receptions =
+        await getAvailableInvoiceReceptions(
+          newInvoiceCarrier,
+        )
+
+      setAvailableReceptions(
+        receptions,
+      )
+
+      setNewInvoiceStep(2)
+    } catch (
+      loadError
+    ) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : 'No se pudieron cargar las recepciones disponibles.',
+      )
+    } finally {
+      setLoadingAvailableReceptions(
+        false,
+      )
+    }
+  }
+
+const toggleNewInvoiceReception =
+  (
+    receptionId: string,
+  ) => {
+    setSelectedReceptionIds(
+      (
+        current,
+      ) =>
+        current.includes(
+          receptionId,
+        )
+          ? current.filter(
+              (
+                id,
+              ) =>
+                id !==
+                receptionId,
+            )
+          : [
+              ...current,
+              receptionId,
+            ],
     )
   }
 
-  const closeEditInvoice =
-    () => {
-      if (savingInvoice) {
-        return
-      }
-
-      setEditingInvoice(null)
-      setEditInvoiceNumber('')
-      setEditCarrier('')
-      setEditPackageCount('')
+const createNewInvoice =
+  async () => {
+    if (
+      selectedReceptionIds.length ===
+      0
+    ) {
+      setError(
+        'Selecciona al menos una recepción.',
+      )
+      return
     }
 
-  const saveInvoiceChanges =
-    async () => {
-      if (!editingInvoice) {
-        return
-      }
+    try {
+      setCreatingInvoice(true)
+      setError('')
+      setSuccessMessage('')
 
-      const rawInvoiceNumber =
-        editInvoiceNumber
-          .trim()
-          .toUpperCase()
+      const result =
+        await createInvoiceWithReceptions(
+          {
+            invoiceNumber:
+              newInvoiceNumber,
 
-      const normalizedInvoiceNumber =
-        rawInvoiceNumber.startsWith(
-          'INV-',
+            carrier:
+              newInvoiceCarrier,
+
+            packageCount:
+              Number(
+                newInvoicePackageCount,
+              ),
+
+            receptionIds:
+              selectedReceptionIds,
+
+            photos:
+              newInvoicePhotos,
+
+            importData:
+              newInvoiceMode === 'csv'
+                ? newInvoiceImportData
+                : null,
+
+            sourceDocuments:
+              newInvoiceMode === 'csv' && newInvoiceCsvFile
+                ? [
+                    newInvoiceCsvFile,
+                    ...newInvoiceEvidenceFiles,
+                  ]
+                : [],
+          },
         )
-          ? rawInvoiceNumber
-          : `INV-${rawInvoiceNumber}`
 
-      const normalizedCarrier =
-        editCarrier.trim()
+      const receptionCount =
+        selectedReceptionIds.length
 
-      const normalizedPackageCount =
-        Number(
-          editPackageCount,
-        )
+      resetNewInvoiceForm()
+
+      setSuccessMessage(
+        newInvoiceMode === 'csv' && newInvoiceImportData
+          ? `La factura ${result.invoiceNumber} se importó con ${newInvoiceImportData.lines.length} partidas y ${receptionCount} recepción(es).`
+          : `La factura ${result.invoiceNumber} se creó correctamente con ${receptionCount} recepción(es).`,
+      )
 
       if (
-        !rawInvoiceNumber ||
-        normalizedInvoiceNumber ===
-          'INV-'
+        statusTab ===
+        'open'
       ) {
-        setError(
-          'El número de factura es obligatorio.',
+        await loadInvoices()
+      } else {
+        setStatusTab(
+          'open',
         )
-        return
       }
+    } catch (
+      createError
+    ) {
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : 'No se pudo crear la factura.',
+      )
+    } finally {
+      setCreatingInvoice(false)
+    }
+  }
 
-      if (!normalizedCarrier) {
-        setError(
-          'El carrier es obligatorio.',
+const openEditInvoice =
+  async (
+    invoice: Invoice,
+  ) => {
+    try {
+      setError('')
+      setSuccessMessage('')
+      setEditingInvoice(
+        invoice,
+      )
+
+      setEditInvoiceNumber(
+        invoice.invoice_number,
+      )
+
+      setEditCarrier(
+        invoice.carrier,
+      )
+
+      setEditPackageCount(
+        String(
+          invoice.package_count ??
+            0,
+        ),
+      )
+
+      setEditReceptionSearch(
+        '',
+      )
+
+      setEditNewPhotos(
+        [],
+      )
+
+      setEditLoadingReceptions(
+        true,
+      )
+
+      setEditLoadingPhotos(
+        true,
+      )
+
+      const currentReceptionIds =
+        invoice.invoice_receptions.map(
+          (
+            item,
+          ) =>
+            item.reception_id,
         )
-        return
-      }
 
-      if (
-        !Number.isInteger(
-          normalizedPackageCount,
-        ) ||
-        normalizedPackageCount <
-          0
-      ) {
-        setError(
-          'El número de bultos debe ser un número entero válido.',
+      setEditSelectedReceptionIds(
+        currentReceptionIds,
+      )
+
+      const [
+        receptions,
+        photos,
+      ] =
+        await Promise.all([
+          getAvailableInvoiceReceptions(
+            invoice.carrier,
+            invoice.id,
+          ),
+
+          getInvoicePhotos(
+            invoice.id,
+          ),
+        ])
+
+      setEditAvailableReceptions(
+        receptions,
+      )
+
+      setEditInvoicePhotos(
+        photos,
+      )
+    } catch (
+      openError
+    ) {
+      setEditingInvoice(
+        null,
+      )
+
+      setError(
+        openError instanceof Error
+          ? openError.message
+          : 'No se pudo abrir el editor de la factura.',
+      )
+    } finally {
+      setEditLoadingReceptions(
+        false,
+      )
+
+      setEditLoadingPhotos(
+        false,
+      )
+    }
+  }
+
+const closeEditInvoice =
+  () => {
+    if (
+      deletingPhotoId
+    ) {
+      return
+    }
+
+    setEditingInvoice(
+      null,
+    )
+
+    setEditInvoiceNumber(
+      '',
+    )
+
+    setEditCarrier(
+      '',
+    )
+
+    setEditPackageCount(
+      '',
+    )
+
+    setEditAvailableReceptions(
+      [],
+    )
+
+    setEditSelectedReceptionIds(
+      [],
+    )
+
+    setEditReceptionSearch(
+      '',
+    )
+
+    setEditInvoicePhotos(
+      [],
+    )
+
+    setEditNewPhotos(
+      [],
+    )
+
+    setEditLoadingReceptions(
+      false,
+    )
+
+    setEditLoadingPhotos(
+      false,
+    )
+
+    setDeletingPhotoId(
+      null,
+    )
+  }
+
+const toggleEditReception =
+  (
+    receptionId:
+      string,
+  ) => {
+    setEditSelectedReceptionIds(
+      (
+        current,
+      ) =>
+        current.includes(
+          receptionId,
         )
-        return
-      }
+          ? current.filter(
+              (
+                id,
+              ) =>
+                id !==
+                receptionId,
+            )
+          : [
+              ...current,
+              receptionId,
+            ],
+    )
+  }
 
-      try {
-        setSavingInvoice(true)
-        setError('')
-        setSuccessMessage('')
+const selectAllVisibleEditReceptions =
+  () => {
+    setEditSelectedReceptionIds(
+      (
+        current,
+      ) =>
+        Array.from(
+          new Set([
+            ...current,
 
-        const {
-          data:
-            duplicateInvoice,
-          error:
-            duplicateError,
-        } = await supabase
-          .from('invoices')
-          .select('id')
-          .eq(
-            'invoice_number',
-            normalizedInvoiceNumber,
-          )
-          .neq(
-            'id',
-            editingInvoice.id,
-          )
-          .maybeSingle()
-
-        if (duplicateError) {
-          throw new Error(
-            duplicateError.message,
-          )
-        }
-
-        if (duplicateInvoice) {
-          setError(
-            `Ya existe una factura con el número ${normalizedInvoiceNumber}.`,
-          )
-          return
-        }
-
-        const {
-          data:
-            updatedInvoice,
-          error:
-            updateError,
-        } = await supabase
-          .from('invoices')
-.update({
-  invoice_number: normalizedInvoiceNumber,
-  carrier: normalizedCarrier,
-  package_count: normalizedPackageCount,
-})
-          .eq(
-            'id',
-            editingInvoice.id,
-          )
-          .select(`
-            id,
-            invoice_number,
-            carrier,
-            package_count
-          `)
-          .single()
-
-        if (updateError) {
-          throw new Error(
-            updateError.message,
-          )
-        }
-
-        setInvoices(
-          (current) =>
-            current.map(
-              (invoice) =>
-                invoice.id ===
-                editingInvoice.id
-                  ? {
-                      ...invoice,
-
-                      invoice_number:
-                        updatedInvoice.invoice_number,
-
-                      carrier:
-                        updatedInvoice.carrier,
-
-                      package_count:
-                        updatedInvoice.package_count,
-                    }
-                  : invoice,
+            ...filteredEditReceptions.map(
+              (
+                reception,
+              ) =>
+                reception.id,
             ),
-        )
+          ]),
+        ),
+    )
+  }
 
-        setSuccessMessage(
-          `La factura ${updatedInvoice.invoice_number} se actualizó correctamente.`,
-        )
+const clearVisibleEditReceptions =
+  () => {
+    const visibleIds =
+      new Set(
+        filteredEditReceptions.map(
+          (
+            reception,
+          ) =>
+            reception.id,
+        ),
+      )
 
-        setEditingInvoice(null)
-        setEditInvoiceNumber('')
-        setEditCarrier('')
-        setEditPackageCount('')
-      } catch (saveError) {
-        setError(
-          saveError instanceof
-            Error
-            ? saveError.message
-            : 'No se pudo actualizar la factura.',
-        )
-      } finally {
-        setSavingInvoice(false)
-      }
+    setEditSelectedReceptionIds(
+      (
+        current,
+      ) =>
+        current.filter(
+          (
+            id,
+          ) =>
+            !visibleIds.has(
+              id,
+            ),
+        ),
+    )
+  }
+
+const reloadEditReceptions =
+  async (
+    carrier:
+      string,
+  ) => {
+    if (
+      !editingInvoice
+    ) {
+      return
     }
+
+    try {
+      setEditLoadingReceptions(
+        true,
+      )
+
+      setError(
+        '',
+      )
+
+      const receptions =
+        await getAvailableInvoiceReceptions(
+          carrier,
+          editingInvoice.id,
+        )
+
+      setEditAvailableReceptions(
+        receptions,
+      )
+
+      const validReceptionIds =
+        new Set(
+          receptions.map(
+            (
+              reception,
+            ) =>
+              reception.id,
+          ),
+        )
+
+      setEditSelectedReceptionIds(
+        (
+          current,
+        ) =>
+          current.filter(
+            (
+              id,
+            ) =>
+              validReceptionIds.has(
+                id,
+              ),
+          ),
+      )
+    } catch (
+      reloadError
+    ) {
+      setError(
+        reloadError instanceof Error
+          ? reloadError.message
+          : 'No se pudieron cargar las recepciones del carrier.',
+      )
+    } finally {
+      setEditLoadingReceptions(
+        false,
+      )
+    }
+  }
+
+const removeExistingInvoicePhoto =
+  async (
+    photoId:
+      string,
+  ) => {
+    if (
+      !editingInvoice
+    ) {
+      return
+    }
+
+    try {
+      setDeletingPhotoId(
+        photoId,
+      )
+
+      setError(
+        '',
+      )
+
+      const remainingPhotos =
+        await deleteInvoicePhoto(
+          editingInvoice.id,
+          photoId,
+        )
+
+      setEditInvoicePhotos(
+        remainingPhotos,
+      )
+    } catch (
+      photoError
+    ) {
+      setError(
+        photoError instanceof Error
+          ? photoError.message
+          : 'No se pudo eliminar la fotografía.',
+      )
+    } finally {
+      setDeletingPhotoId(
+        null,
+      )
+    }
+  }
+
+const saveInvoiceChanges =
+  async () => {
+    if (
+      !editingInvoice
+    ) {
+      return
+    }
+
+    const packageCount =
+      Number(
+        editPackageCount,
+      )
+
+    if (
+      editSelectedReceptionIds.length ===
+      0
+    ) {
+      setError(
+        'La factura debe conservar al menos una recepción.',
+      )
+
+      return
+    }
+
+    if (
+      editInvoicePhotos.length ===
+        0 &&
+      editNewPhotos.length ===
+        0
+    ) {
+      setError(
+        'La factura debe conservar al menos una fotografía.',
+      )
+
+      return
+    }
+
+    if (
+      !Number.isInteger(
+        packageCount,
+      ) ||
+      packageCount <
+        0
+    ) {
+      setError(
+        'El número de bultos debe ser un número entero válido.',
+      )
+
+      return
+    }
+
+    try {
+      setSavingInvoice(
+        true,
+      )
+
+      setError(
+        '',
+      )
+
+      setSuccessMessage(
+        '',
+      )
+
+      const result =
+        await updateInvoiceWithReceptions(
+          {
+            invoiceId:
+              editingInvoice.id,
+
+            invoiceNumber:
+              editInvoiceNumber,
+
+            carrier:
+              editCarrier,
+
+            packageCount,
+
+            receptionIds:
+              editSelectedReceptionIds,
+          },
+        )
+
+      if (
+        editNewPhotos.length >
+        0
+      ) {
+        await addInvoicePhotos(
+          editingInvoice.id,
+          editNewPhotos,
+        )
+      }
+
+      const receptionCount =
+        editSelectedReceptionIds.length
+
+      closeEditInvoice()
+
+      setSuccessMessage(
+        `La factura ${result.invoiceNumber} se actualizó correctamente con ${receptionCount} recepción(es).`,
+      )
+
+      await loadInvoices()
+    } catch (
+      saveError
+    ) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : 'No se pudo actualizar la factura.',
+      )
+    } finally {
+      setSavingInvoice(
+        false,
+      )
+    }
+  }
 
   const completeInvoice =
     async (
@@ -853,6 +1858,36 @@ export function BillingPage() {
       checked:
         boolean,
     ) => {
+      const savingKey =
+        `${invoiceId}:${part.id}`
+
+      if (savingPartChecks[savingKey]) {
+        return
+      }
+
+      const previousReviewed =
+        part.invoice_part_checks.some(
+          (check) =>
+            check.invoice_id === invoiceId &&
+            check.reviewed,
+        )
+
+      setSavingPartChecks(
+        (current) => ({
+          ...current,
+          [savingKey]: true,
+        }),
+      )
+
+      setInvoices((current) =>
+        updateInvoicePartReviewedState(
+          current,
+          invoiceId,
+          part.id,
+          checked,
+        ),
+      )
+
       try {
         setError('')
 
@@ -892,16 +1927,35 @@ export function BillingPage() {
             upsertError.message,
           )
         }
-
-        await loadInvoices()
       } catch (
         updateError
       ) {
+        setInvoices((current) =>
+          updateInvoicePartReviewedState(
+            current,
+            invoiceId,
+            part.id,
+            previousReviewed,
+          ),
+        )
+
         setError(
           updateError instanceof
             Error
             ? updateError.message
             : 'No se pudo actualizar el check del número de parte.',
+        )
+      } finally {
+        setSavingPartChecks(
+          (current) => {
+            const next = {
+              ...current,
+            }
+
+            delete next[savingKey]
+
+            return next
+          },
         )
       }
     }
@@ -1193,6 +2247,38 @@ export function BillingPage() {
       }
     }
 
+  const openInvoiceSourceDocument =
+    async (document: InvoiceSourceDocumentRecord) => {
+      try {
+        setError('')
+        setOpeningSourceDocumentId(document.id)
+
+        const { data, error: signedUrlError } = await supabase.storage
+          .from('invoice-source-documents')
+          .createSignedUrl(document.storage_path, 60 * 10)
+
+        if (signedUrlError || !data?.signedUrl) {
+          throw new Error(
+            signedUrlError?.message || 'No se pudo abrir el documento original.',
+          )
+        }
+
+        const link = window.document.createElement('a')
+        link.href = data.signedUrl
+        link.target = '_blank'
+        link.rel = 'noopener noreferrer'
+        link.click()
+      } catch (documentError) {
+        setError(
+          documentError instanceof Error
+            ? documentError.message
+            : 'No se pudo abrir el documento original.',
+        )
+      } finally {
+        setOpeningSourceDocumentId(null)
+      }
+    }
+
   const showPreviousInvoicePhoto =
     () => {
       setInvoiceViewerIndex(
@@ -1300,8 +2386,30 @@ export function BillingPage() {
             </button>
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <div className="relative">
+<div className="flex flex-col gap-3 sm:flex-row">
+  {statusTab !== 'osd' && (
+    <div className="flex flex-col gap-2 sm:flex-row">
+      <button
+        type="button"
+        onClick={() => openNewInvoice('csv')}
+        className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950"
+      >
+        <FileSpreadsheet size={18} />
+        Importar factura
+      </button>
+
+      <button
+        type="button"
+        onClick={() => openNewInvoice('manual')}
+        className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-semibold"
+      >
+        <Plus size={18} />
+        Captura manual
+      </button>
+    </div>
+  )}
+
+  <div className="relative">
               <Search
                 size={18}
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
@@ -1482,6 +2590,10 @@ export function BillingPage() {
             <div className="space-y-6">
               {filteredInvoices.map(
                 (invoice) => {
+                  const imported = getInvoiceImport(invoice)
+                  const importedLines = [
+                    ...(imported?.invoice_import_lines || []),
+                  ].sort((first, second) => first.line_number - second.line_number)
                   const invoiceParts =
                     invoice
                       .invoice_receptions
@@ -1533,9 +2645,36 @@ export function BillingPage() {
                         <p className="mt-1 text-sm text-slate-400">
                           {invoice.carrier} · {invoice.package_count} bultos · {invoice.invoice_receptions.length} recepciones
                         </p>
+
+                        {imported && (
+                          <p className="mt-2 inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-400">
+                            <FileSpreadsheet size={14} />
+                            {importedLines.length} partidas importadas · {Number(
+                              imported.total_quantity,
+                            ).toLocaleString('es-MX')} unidades
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex flex-wrap gap-2">
+                        {invoice.invoice_source_documents.map((document) => (
+                          <button
+                            key={document.id}
+                            type="button"
+                            disabled={openingSourceDocumentId === document.id}
+                            onClick={() => void openInvoiceSourceDocument(document)}
+                            className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold disabled:opacity-40"
+                            title={document.file_name}
+                          >
+                            <FileText size={17} />
+                            {openingSourceDocumentId === document.id
+                              ? 'Abriendo...'
+                              : document.document_type === 'csv'
+                                ? 'CSV original'
+                                : 'Documento original'}
+                          </button>
+                        ))}
+
                         {invoice.invoice_photo_path && (
                           <button
                             type="button"
@@ -1638,6 +2777,110 @@ export function BillingPage() {
                     </div>
 
                     <div className="divide-y divide-slate-800">
+                      {imported && (
+                        <div className="p-4">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedInvoiceImports((current) => ({
+                                ...current,
+                                [invoice.id]: !current[invoice.id],
+                              }))
+                            }
+                            className="grid w-full grid-cols-[auto_1fr_auto] items-center gap-3 text-left"
+                          >
+                            <span className="text-slate-500">
+                              {expandedInvoiceImports[invoice.id]
+                                ? <ChevronDown size={18} />
+                                : <ChevronRight size={18} />}
+                            </span>
+
+                            <span>
+                              <span className="block font-semibold">Contenido importado</span>
+                              <span className="mt-1 block text-sm text-slate-400">
+                                {importedLines.length} partidas · Peso {Number(
+                                  imported.total_weight,
+                                ).toLocaleString('es-MX')} · {imported.currency}{' '}
+                                {Number(imported.invoice_total).toLocaleString('en-US', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </span>
+                            </span>
+
+                            <span className="text-xs font-semibold text-emerald-400">
+                              {imported.container_number || 'Sin contenedor'}
+                            </span>
+                          </button>
+
+                          {expandedInvoiceImports[invoice.id] && (
+                            <div className="mt-4 space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
+                              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                <Info
+                                  label="Fecha de factura"
+                                  value={imported.invoice_date || '—'}
+                                />
+                                <Info
+                                  label="Semana fiscal"
+                                  value={imported.fiscal_week?.toString() || '—'}
+                                />
+                                <Info
+                                  label="Contenedor"
+                                  value={imported.container_number || '—'}
+                                />
+                                <Info
+                                  label="Pedimento"
+                                  value={imported.customs_entry || '—'}
+                                />
+                              </div>
+
+                              <div className="max-h-96 overflow-auto rounded-xl border border-slate-800">
+                                <table className="w-full min-w-[850px] text-left text-sm">
+                                  <thead className="sticky top-0 border-b border-slate-700 bg-slate-950 text-xs uppercase text-slate-500">
+                                    <tr>
+                                      <th className="px-3 py-3">Línea</th>
+                                      <th className="px-3 py-3">Número de parte</th>
+                                      <th className="px-3 py-3">Descripción</th>
+                                      <th className="px-3 py-3 text-right">Cantidad</th>
+                                      <th className="px-3 py-3 text-right">Peso</th>
+                                      <th className="px-3 py-3 text-right">Total</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-slate-800 bg-slate-950">
+                                    {importedLines.map((line) => (
+                                      <tr key={line.id}>
+                                        <td className="px-3 py-3 text-slate-500">
+                                          {line.line_number}
+                                        </td>
+                                        <td className="px-3 py-3 font-semibold">
+                                          {line.part_number}
+                                        </td>
+                                        <td className="max-w-sm px-3 py-3 text-slate-300">
+                                          {line.description || '—'}
+                                        </td>
+                                        <td className="px-3 py-3 text-right">
+                                          {Number(line.commercial_quantity).toLocaleString('es-MX')}
+                                        </td>
+                                        <td className="px-3 py-3 text-right">
+                                          {Number(line.weight).toLocaleString('es-MX')}
+                                        </td>
+                                        <td className="px-3 py-3 text-right font-semibold">
+                                          {imported.currency}{' '}
+                                          {Number(line.total_price).toLocaleString('en-US', {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          })}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {invoice.invoice_receptions.map(
                         (item) => {
                           const reception =
@@ -1790,6 +3033,13 @@ export function BillingPage() {
                                               <td className="px-4 py-3 text-center">
                                                 <input
                                                   type="checkbox"
+                                                  disabled={
+                                                    Boolean(
+                                                      savingPartChecks[
+                                                        `${invoice.id}:${part.id}`
+                                                      ],
+                                                    )
+                                                  }
                                                   checked={
                                                     part
                                                       .invoice_part_checks
@@ -1811,7 +3061,7 @@ export function BillingPage() {
                                                       event.target.checked,
                                                     )
                                                   }
-                                                  className="h-5 w-5 cursor-pointer accent-emerald-500"
+                                                  className="h-5 w-5 cursor-pointer accent-emerald-500 disabled:cursor-wait disabled:opacity-60"
                                                 />
                                               </td>
                                             </tr>
@@ -1835,142 +3085,605 @@ export function BillingPage() {
           )}
         </div>
       </section>
+{newInvoiceOpen && (
+  <div
+    className="fixed inset-0 z-[140] flex items-center justify-center bg-black/80 p-4"
+    role="dialog"
+    aria-modal="true"
+    aria-label={newInvoiceMode === 'csv' ? 'Importar factura' : 'Nueva factura'}
+    onClick={
+      closeNewInvoice
+    }
+  >
+    <div
+      className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"
+      onClick={(
+        event,
+      ) =>
+        event.stopPropagation()
+      }
+    >
+      <div className="flex items-center justify-between gap-4 border-b border-slate-700 px-5 py-4">
+        <div>
+          <p className="text-sm text-slate-400">
+            Paso {newInvoiceStep} de 2
+          </p>
 
-      {editingInvoice && (
-        <div
-          className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Editar factura ${editingInvoice.invoice_number}`}
-          onClick={closeEditInvoice}
+          <h2 className="mt-1 text-xl font-bold">
+            {newInvoiceStep === 1
+              ? newInvoiceMode === 'csv'
+                ? 'Importar factura'
+                : 'Nueva Factura'
+              : 'Seleccionar recepciones'}
+          </h2>
+        </div>
+
+        <button
+          type="button"
+          onClick={
+            closeNewInvoice
+          }
+          disabled={
+            creatingInvoice ||
+            loadingAvailableReceptions
+          }
+          className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-40"
+          aria-label="Cerrar"
         >
-          <div
-            className="w-full max-w-lg overflow-hidden rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl"
-            onClick={(event) =>
-              event.stopPropagation()
-            }
-          >
-            <div className="flex items-center justify-between border-b border-slate-700 px-5 py-4">
-              <div>
-                <p className="text-sm text-slate-400">
-                  Modificar información
-                </p>
+          <X size={20} />
+        </button>
+      </div>
 
-                <h2 className="mt-1 text-xl font-bold">
-                  Editar factura
-                </h2>
-              </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        {newInvoiceStep ===
+        1 ? (
+          <div className="mx-auto max-w-2xl space-y-5">
+            {newInvoiceMode === 'csv' && (
+              <InvoiceCsvImportSection
+                data={newInvoiceImportData}
+                sourceFile={newInvoiceCsvFile}
+                evidenceFiles={newInvoiceEvidenceFiles}
+                onImported={handleInvoiceCsvImported}
+                onClear={clearInvoiceCsvImport}
+                onEvidenceFilesChange={setNewInvoiceEvidenceFiles}
+                onError={setError}
+              />
+            )}
 
-              <button
-                type="button"
-                onClick={closeEditInvoice}
-                disabled={savingInvoice}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-                aria-label="Cerrar edición"
-                title="Cerrar"
+            <div>
+              <label
+                htmlFor="new-invoice-carrier"
+                className="mb-2 block text-sm font-semibold text-slate-300"
               >
-                <X size={20} />
-              </button>
+                Carrier
+              </label>
+
+              <select
+                id="new-invoice-carrier"
+                value={
+                  newInvoiceCarrier
+                }
+                onChange={(
+                  event,
+                ) => {
+                  setNewInvoiceCarrier(
+                    event.target.value,
+                  )
+
+                  setAvailableReceptions(
+                    [],
+                  )
+
+                  setSelectedReceptionIds(
+                    [],
+                  )
+                }}
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
+              >
+                <option value="XPO">
+                  XPO
+                </option>
+
+                <option value="CENTRAL">
+                  CENTRAL
+                </option>
+
+                <option value="MTY">
+                  MTY
+                </option>
+
+                <option value="IZI">
+                  IZI
+                </option>
+
+                <option value="FLETHSA">
+                  FLETHSA
+                </option>
+
+                <option value="OTHER">
+                  OTHER
+                </option>
+              </select>
+
+              {newInvoiceCarrier ===
+                'OTHER' && (
+                <p className="mt-2 text-xs text-slate-500">
+                  Se mostrarán todas las recepciones registradas como OTHER, sin importar el nombre específico del transportista.
+                </p>
+              )}
             </div>
 
-            <form
-              className="space-y-5 p-5"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void saveInvoiceChanges()
-              }}
-            >
-              <div>
-                <label
-                  htmlFor="edit-invoice-number"
-                  className="mb-2 block text-sm font-semibold text-slate-300"
-                >
-                  Número de factura
-                </label>
+            <div>
+              <label
+                htmlFor="new-invoice-number"
+                className="mb-2 block text-sm font-semibold text-slate-300"
+              >
+                Número de factura
+              </label>
+
+              <div className="flex overflow-hidden rounded-xl border border-slate-700 bg-slate-950 focus-within:border-emerald-500">
+                <span className="flex items-center border-r border-slate-700 bg-slate-800 px-4 font-bold text-slate-300">
+                  INV-
+                </span>
 
                 <input
-                  id="edit-invoice-number"
-                  value={editInvoiceNumber}
-                  onChange={(event) =>
-                    setEditInvoiceNumber(
-                      event.target.value,
+                  id="new-invoice-number"
+                  value={
+                    newInvoiceNumber
+                  }
+                  onChange={(
+                    event,
+                  ) =>
+                    setNewInvoiceNumber(
+                      event.target.value
+                        .toUpperCase()
+                        .replace(
+                          /^INV-/,
+                          '',
+                        ),
                     )
                   }
-                  placeholder="INV-00000"
-                  autoFocus
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
+                  placeholder="123456"
+                  className="min-w-0 flex-1 bg-transparent px-4 py-3 outline-none"
                 />
               </div>
+            </div>
 
-              <div>
-                <label
-                  htmlFor="edit-carrier"
-                  className="mb-2 block text-sm font-semibold text-slate-300"
-                >
-                  Carrier
-                </label>
+            <div>
+              <label
+                htmlFor="new-invoice-package-count"
+                className="mb-2 block text-sm font-semibold text-slate-300"
+              >
+                Número de bultos
+              </label>
+
+              <input
+                id="new-invoice-package-count"
+                type="number"
+                min="0"
+                step="1"
+                inputMode="numeric"
+                value={
+                  newInvoicePackageCount
+                }
+                onChange={(
+                  event,
+                ) =>
+                  setNewInvoicePackageCount(
+                    event.target.value,
+                  )
+                }
+                placeholder="0"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <p className="mb-2 text-sm font-semibold text-slate-300">
+                {newInvoiceMode === 'csv'
+                  ? 'Fotografías adicionales (opcional)'
+                  : 'Fotografías de la factura'}
+              </p>
+
+              <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-slate-700 bg-slate-950 p-6 text-slate-300 hover:border-emerald-500">
+                <ImagePlus size={20} />
+                Agregar fotografías
 
                 <input
-                  id="edit-carrier"
-                  value={editCarrier}
-                  onChange={(event) =>
-                    setEditCarrier(
-                      event.target.value,
-                    )
-                  }
-                  placeholder="Nombre del carrier"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(
+                    event,
+                  ) => {
+                    const files =
+                      Array.from(
+                        event.target.files ||
+                          [],
+                      )
+
+                    if (
+                      files.length >
+                      0
+                    ) {
+                      setNewInvoicePhotos(
+                        (
+                          current,
+                        ) => [
+                          ...current,
+                          ...files,
+                        ],
+                      )
+                    }
+
+                    event.target.value =
+                      ''
+                  }}
                 />
-              </div>
+              </label>
 
-              <div>
-                <label
-                  htmlFor="edit-package-count"
-                  className="mb-2 block text-sm font-semibold text-slate-300"
-                >
-                  Número de bultos
-                </label>
+              {newInvoicePhotos.length >
+                0 && (
+                <div className="mt-3 space-y-2">
+                  {newInvoicePhotos.map(
+                    (
+                      photo,
+                      index,
+                    ) => (
+                      <div
+                        key={`${photo.name}-${photo.lastModified}-${index}`}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-950 px-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">
+                            {photo.name}
+                          </p>
 
-                <input
-                  id="edit-package-count"
-                  type="number"
-                  min="0"
-                  inputMode="numeric"
-                  value={editPackageCount}
-                  onChange={(event) =>
-                    setEditPackageCount(
-                      event.target.value,
-                    )
-                  }
-                  placeholder="0"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
-                />
-              </div>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {index === 0
+                              ? 'Foto principal'
+                              : `Foto ${index + 1}`}
+                          </p>
+                        </div>
 
-              <div className="flex flex-col-reverse gap-3 border-t border-slate-800 pt-5 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={closeEditInvoice}
-                  disabled={savingInvoice}
-                  className="rounded-xl border border-slate-700 px-5 py-2.5 text-sm font-semibold text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Cancelar
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={savingInvoice}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-2.5 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {savingInvoice
-                    ? 'Guardando...'
-                    : 'Guardar cambios'}
-                </button>
-              </div>
-            </form>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setNewInvoicePhotos(
+                              (
+                                current,
+                              ) =>
+                                current.filter(
+                                  (
+                                    _,
+                                    photoIndex,
+                                  ) =>
+                                    photoIndex !==
+                                    index,
+                                ),
+                            )
+                          }
+                          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-500/30 bg-red-500/10 text-red-400"
+                          aria-label={`Quitar ${photo.name}`}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ),
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-bold">
+                  INV-{newInvoiceNumber
+                    .trim()
+                    .toUpperCase()
+                    .replace(
+                      /^INV-/,
+                      '',
+                    )}
+                </p>
+
+                <p className="mt-1 text-sm text-slate-400">
+                  {newInvoiceCarrier} · {newInvoicePackageCount} bultos
+                  {newInvoiceMode === 'csv' && newInvoiceImportData
+                    ? ` · ${newInvoiceImportData.lines.length} partidas · ${newInvoiceImportData.totalQuantity} unidades`
+                    : ''}
+                </p>
+              </div>
+
+              <p className="text-sm font-semibold text-emerald-400">
+                {selectedReceptionIds.length}{' '}
+                recepción(es) seleccionada(s)
+              </p>
+            </div>
+
+            {availableReceptions.length ===
+              0 ? (
+              <div className="rounded-xl border border-dashed border-slate-700 py-12 text-center text-slate-500">
+                No hay recepciones disponibles para este carrier.
+              </div>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {availableReceptions.map(
+                  (
+                    reception,
+                  ) => {
+                    const selected =
+                      selectedReceptionIds.includes(
+                        reception.id,
+                      )
+
+                    return (
+                      <button
+                        key={
+                          reception.id
+                        }
+                        type="button"
+                        onClick={() =>
+                          toggleNewInvoiceReception(
+                            reception.id,
+                          )
+                        }
+                        className={[
+                          'rounded-2xl border p-5 text-left transition',
+                          selected
+                            ? 'border-emerald-500 bg-emerald-500/10'
+                            : 'border-slate-800 bg-slate-950 hover:border-slate-600',
+                        ].join(
+                          ' ',
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-lg font-bold">
+                              {reception.reception_number ||
+                                'Sin folio'}
+                            </p>
+
+                            <p className="mt-1 text-sm text-slate-400">
+                              {reception.other_carrier ||
+                                reception.carrier}
+                              {' · '}
+                              {reception.trailer ||
+                                'Sin trailer'}
+                            </p>
+                          </div>
+
+                          <input
+                            type="checkbox"
+                            checked={
+                              selected
+                            }
+                            readOnly
+                            className="h-5 w-5 shrink-0 accent-emerald-500"
+                          />
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-xs uppercase text-slate-500">
+                              Fecha
+                            </p>
+
+                            <p className="mt-1 font-semibold">
+                              {reception.reception_date}
+                            </p>
+                          </div>
+
+                          <div>
+                            <p className="text-xs uppercase text-slate-500">
+                              Pallets
+                            </p>
+
+                            <p className="mt-1 font-semibold">
+                              {reception.pallet_count}
+                            </p>
+                          </div>
+
+                          <div>
+                            <p className="text-xs uppercase text-slate-500">
+                              Cantidad
+                            </p>
+
+                            <p className="mt-1 font-semibold">
+                              {reception.total_quantity}
+                            </p>
+                          </div>
+
+                          <div>
+                            <p className="text-xs uppercase text-slate-500">
+                              Bultos registrados
+                            </p>
+
+                            <p className="mt-1 font-semibold">
+                              {reception.total_packages}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <p className="text-xs uppercase text-slate-500">
+                            Números de parte
+                          </p>
+
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {reception.part_numbers.length >
+                              0 ? (
+                              reception.part_numbers.map(
+                                (
+                                  partNumber,
+                                ) => (
+                                  <span
+                                    key={
+                                      partNumber
+                                    }
+                                    className="rounded-lg bg-slate-800 px-2 py-1 text-xs"
+                                  >
+                                    {partNumber}
+                                  </span>
+                                ),
+                              )
+                            ) : (
+                              <span className="text-sm text-slate-500">
+                                Sin números de parte
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  },
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col-reverse gap-3 border-t border-slate-700 px-5 py-4 sm:flex-row sm:justify-end">
+        {newInvoiceStep ===
+        2 && (
+          <button
+            type="button"
+            disabled={
+              creatingInvoice
+            }
+            onClick={() => {
+              setError('')
+              setNewInvoiceStep(
+                1,
+              )
+            }}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 px-5 py-3 font-semibold text-slate-300 disabled:opacity-40"
+          >
+            <ArrowLeft size={18} />
+            Atrás
+          </button>
+        )}
+
+        <button
+          type="button"
+          disabled={
+            creatingInvoice ||
+            loadingAvailableReceptions
+          }
+          onClick={
+            closeNewInvoice
+          }
+          className="rounded-xl border border-slate-700 px-5 py-3 font-semibold text-slate-300 disabled:opacity-40"
+        >
+          Cancelar
+        </button>
+
+        {newInvoiceStep ===
+        1 ? (
+          <button
+            type="button"
+            disabled={
+              loadingAvailableReceptions ||
+              (newInvoiceMode === 'csv' &&
+                (!newInvoiceImportData ||
+                  !newInvoiceImportData.valid))
+            }
+            onClick={() =>
+              void continueToReceptionSelection()
+            }
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-bold text-slate-950 disabled:opacity-40"
+          >
+            {loadingAvailableReceptions
+              ? 'Cargando...'
+              : 'Continuar'}
+
+            {!loadingAvailableReceptions && (
+              <ArrowRight size={18} />
+            )}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={
+              creatingInvoice ||
+              selectedReceptionIds.length ===
+                0
+            }
+            onClick={() =>
+              void createNewInvoice()
+            }
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {creatingInvoice
+              ? 'Creando factura...'
+              : 'Crear factura'}
+          </button>
+        )}
+      </div>
+    </div>
+  </div>
+)}
+
+
+      {editingInvoice && (
+        <EditInvoiceModal
+          invoice={{
+            id: editingInvoice.id,
+            invoiceNumber: editingInvoice.invoice_number,
+          }}
+          invoiceNumber={editInvoiceNumber}
+          carrier={editCarrier}
+          packageCount={editPackageCount}
+          availableReceptions={filteredEditReceptions}
+          selectedReceptionIds={editSelectedReceptionIds}
+          receptionSearch={editReceptionSearch}
+          summary={editInvoiceSummary}
+          existingPhotos={editInvoicePhotos}
+          newPhotos={editNewPhotos}
+          loadingReceptions={editLoadingReceptions}
+          loadingPhotos={editLoadingPhotos}
+          saving={savingInvoice}
+          deletingPhotoId={deletingPhotoId}
+          onInvoiceNumberChange={setEditInvoiceNumber}
+          onCarrierChange={(carrier) => {
+            setEditCarrier(carrier)
+            void reloadEditReceptions(carrier)
+          }}
+          onPackageCountChange={setEditPackageCount}
+          onReceptionSearchChange={setEditReceptionSearch}
+          onToggleReception={toggleEditReception}
+          onSelectAllVisible={selectAllVisibleEditReceptions}
+          onClearVisible={clearVisibleEditReceptions}
+          onAddPhotos={(files) =>
+            setEditNewPhotos((current) => [
+              ...current,
+              ...files,
+            ])
+          }
+          onRemoveNewPhoto={(index) =>
+            setEditNewPhotos((current) =>
+              current.filter(
+                (_, photoIndex) =>
+                  photoIndex !== index,
+              ),
+            )
+          }
+          onDeleteExistingPhoto={(photoId) =>
+            void removeExistingInvoicePhoto(
+              photoId,
+            )
+          }
+          onClose={closeEditInvoice}
+          onSave={() =>
+            void saveInvoiceChanges()
+          }
+        />
       )}
+
       {invoiceViewerOpen && (
         <div
           className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-4"
