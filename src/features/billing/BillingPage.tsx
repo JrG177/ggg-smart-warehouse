@@ -5,6 +5,7 @@ import {
 } from 'react'
 
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   ChevronDown,
@@ -18,6 +19,7 @@ import {
   Pencil,
   Plus,
   RefreshCcw,
+  ScanBarcode,
   Search,
   Trash2,
   X,
@@ -39,6 +41,12 @@ import type { InvoiceImportData } from '../../types/invoiceImport'
 
 import { EditInvoiceModal } from './components/EditInvoiceModal'
 import { InvoiceCsvImportSection } from './components/InvoiceCsvImportSection'
+import { InvoiceLoadScanner } from './components/InvoiceLoadScanner'
+import {
+  buildInvoiceReconciliation,
+  type InvoiceReconciliation,
+  type ReconciliationStatus,
+} from './invoiceReconciliation'
 
 type InvoicePartCheck = {
   id: string
@@ -376,6 +384,85 @@ function updateInvoicePartReviewedState(
   )
 }
 
+function getInvoiceReconciliation(
+  invoice: Invoice,
+): InvoiceReconciliation | null {
+  const imported = getInvoiceImport(
+    invoice,
+  )
+
+  if (!imported) {
+    return null
+  }
+
+  const receivedParts =
+    invoice.invoice_receptions.flatMap(
+      (item) =>
+        getReception(item)?.pallets.flatMap(
+          (pallet) =>
+            pallet.pallet_parts,
+        ) || [],
+    )
+
+  return buildInvoiceReconciliation(
+    imported.invoice_import_lines,
+    receivedParts,
+  )
+}
+
+type ReconciliationFilter =
+  | 'all'
+  | 'differences'
+  | 'matched'
+
+const reconciliationStatusLabels:
+  Record<ReconciliationStatus, string> = {
+    matched: 'Coincide',
+    missing: 'Faltante',
+    extra: 'Sobrante',
+    not_in_invoice: 'No pertenece',
+  }
+
+const reconciliationStatusClasses:
+  Record<ReconciliationStatus, string> = {
+    matched:
+      'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+    missing:
+      'border-red-500/30 bg-red-500/10 text-red-400',
+    extra:
+      'border-amber-500/30 bg-amber-500/10 text-amber-400',
+    not_in_invoice:
+      'border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-400',
+  }
+
+function formatReconciliationQuantity(
+  value: number,
+) {
+  return Number(value).toLocaleString(
+    'es-MX',
+    {
+      maximumFractionDigits: 4,
+    },
+  )
+}
+
+function formatReconciliationDifference(
+  value: number,
+) {
+  if (value === 0) {
+    return '0'
+  }
+
+  const formatted =
+    formatReconciliationQuantity(
+      Math.abs(value),
+    )
+
+  return value > 0
+    ? `+${formatted}`
+    : `-${formatted}`
+}
+
 export function BillingPage() {
   const [invoices, setInvoices] =
     useState<Invoice[]>([])
@@ -416,8 +503,20 @@ export function BillingPage() {
     setExpandedReceptions,
   ] =
     useState<Record<string, boolean>>(
-      {},
-    )
+    {},
+  )
+
+  const [
+    expandedReconciliations,
+    setExpandedReconciliations,
+  ] = useState<Record<string, boolean>>({})
+
+  const [
+    reconciliationFilters,
+    setReconciliationFilters,
+  ] = useState<
+    Record<string, ReconciliationFilter>
+  >({})
 
   const [error, setError] =
     useState('')
@@ -426,6 +525,11 @@ export function BillingPage() {
     savingPartChecks,
     setSavingPartChecks,
   ] = useState<Record<string, boolean>>({})
+
+  const [
+    scanningInvoice,
+    setScanningInvoice,
+  ] = useState<Invoice | null>(null)
 
   const [
     invoiceViewerOpen,
@@ -1756,6 +1860,11 @@ const saveInvoiceChanges =
               ),
         )
 
+      const reconciliation =
+        getInvoiceReconciliation(
+          invoice,
+        )
+
       const finalPackageCount =
         Number(
           completionPackageCounts[
@@ -1784,6 +1893,32 @@ const saveInvoiceChanges =
           'Captura un # de Bultos válido antes de completar la factura.',
         )
         return
+      }
+
+      if (
+        reconciliation?.hasDifferences
+      ) {
+        const confirmed = window.confirm(
+          `Esta factura tiene ${reconciliation.differenceCount} diferencia(s) entre el archivo importado y las recepciones. ¿Confirmas que ya fueron revisadas y deseas completar la factura?`,
+        )
+
+        if (!confirmed) {
+          setExpandedReconciliations(
+            (current) => ({
+              ...current,
+              [invoice.id]: true,
+            }),
+          )
+
+          setReconciliationFilters(
+            (current) => ({
+              ...current,
+              [invoice.id]: 'differences',
+            }),
+          )
+
+          return
+        }
       }
 
       try {
@@ -2631,6 +2766,37 @@ const saveInvoiceChanges =
                           ),
                     )
 
+                  const reconciliation =
+                    getInvoiceReconciliation(
+                      invoice,
+                    )
+
+                  const reconciliationFilter =
+                    reconciliationFilters[
+                      invoice.id
+                    ] || 'all'
+
+                  const visibleReconciliationRows =
+                    reconciliation?.rows.filter(
+                      (row) => {
+                        if (
+                          reconciliationFilter ===
+                          'differences'
+                        ) {
+                          return row.status !== 'matched'
+                        }
+
+                        if (
+                          reconciliationFilter ===
+                          'matched'
+                        ) {
+                          return row.status === 'matched'
+                        }
+
+                        return true
+                      },
+                    ) || []
+
                   return (
                   <article
                     key={invoice.id}
@@ -2654,9 +2820,40 @@ const saveInvoiceChanges =
                             ).toLocaleString('es-MX')} unidades
                           </p>
                         )}
+
+                        {reconciliation && (
+                          <p
+                            className={[
+                              'mt-2 inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs font-semibold',
+                              reconciliation.hasDifferences
+                                ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                                : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+                            ].join(' ')}
+                          >
+                            {reconciliation.hasDifferences
+                              ? <AlertTriangle size={14} />
+                              : <CheckCircle2 size={14} />}
+                            {reconciliation.hasDifferences
+                              ? `${reconciliation.differenceCount} diferencia(s) por revisar`
+                              : 'Factura y recepciones coinciden'}
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex flex-wrap gap-2">
+                        {imported && invoice.status === 'open' && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setScanningInvoice(invoice)
+                            }
+                            className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950"
+                          >
+                            <ScanBarcode size={18} />
+                            Verificar carga
+                          </button>
+                        )}
+
                         {invoice.invoice_source_documents.map((document) => (
                           <button
                             key={document.id}
@@ -2777,6 +2974,231 @@ const saveInvoiceChanges =
                     </div>
 
                     <div className="divide-y divide-slate-800">
+                      {reconciliation && (
+                        <div className="p-4">
+                          <button
+                            type="button"
+                            aria-expanded={Boolean(
+                              expandedReconciliations[
+                                invoice.id
+                              ],
+                            )}
+                            onClick={() =>
+                              setExpandedReconciliations(
+                                (current) => ({
+                                  ...current,
+                                  [invoice.id]:
+                                    !current[invoice.id],
+                                }),
+                              )
+                            }
+                            className="grid w-full grid-cols-[auto_1fr] items-center gap-3 text-left sm:grid-cols-[auto_1fr_auto]"
+                          >
+                            <span className="text-slate-500">
+                              {expandedReconciliations[
+                                invoice.id
+                              ]
+                                ? <ChevronDown size={18} />
+                                : <ChevronRight size={18} />}
+                            </span>
+
+                            <span>
+                              <span className="block font-semibold">
+                                Conciliación factura vs. recepciones
+                              </span>
+
+                              <span className="mt-1 block text-sm text-slate-400">
+                                {reconciliation.matchedCount} coinciden ·{' '}
+                                {reconciliation.differenceCount} diferencias ·{' '}
+                                {reconciliation.rows.length} números de parte
+                              </span>
+                            </span>
+
+                            <span
+                              className={[
+                                'col-start-2 justify-self-start rounded-full border px-3 py-1 text-xs font-bold sm:col-start-auto sm:justify-self-auto',
+                                reconciliation.hasDifferences
+                                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+                                  : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
+                              ].join(' ')}
+                            >
+                              {reconciliation.hasDifferences
+                                ? 'Revisión necesaria'
+                                : 'Todo coincide'}
+                            </span>
+                          </button>
+
+                          {expandedReconciliations[
+                            invoice.id
+                          ] && (
+                            <div className="mt-4 space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
+                              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                <ReconciliationMetric
+                                  label="Coinciden"
+                                  value={reconciliation.matchedCount}
+                                  className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                                />
+
+                                <ReconciliationMetric
+                                  label="Faltantes"
+                                  value={reconciliation.missingCount}
+                                  className="border-red-500/30 bg-red-500/10 text-red-400"
+                                />
+
+                                <ReconciliationMetric
+                                  label="Sobrantes"
+                                  value={reconciliation.extraCount}
+                                  className="border-amber-500/30 bg-amber-500/10 text-amber-400"
+                                />
+
+                                <ReconciliationMetric
+                                  label="No pertenecen"
+                                  value={reconciliation.notInInvoiceCount}
+                                  className="border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-400"
+                                />
+                              </div>
+
+                              {reconciliation.hasDifferences && (
+                                <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+                                  <AlertTriangle
+                                    className="mt-0.5 shrink-0"
+                                    size={18}
+                                  />
+
+                                  <p>
+                                    Revisa estas diferencias antes de cargar. Si intentas completar la factura, el sistema solicitará una confirmación adicional.
+                                  </p>
+                                </div>
+                              )}
+
+                              <div className="flex flex-wrap gap-2">
+                                {([
+                                  ['all', 'Todos', reconciliation.rows.length],
+                                  ['differences', 'Solo diferencias', reconciliation.differenceCount],
+                                  ['matched', 'Coinciden', reconciliation.matchedCount],
+                                ] as Array<[
+                                  ReconciliationFilter,
+                                  string,
+                                  number,
+                                ]>).map(
+                                  ([filter, label, count]) => (
+                                    <button
+                                      key={filter}
+                                      type="button"
+                                      onClick={() =>
+                                        setReconciliationFilters(
+                                          (current) => ({
+                                            ...current,
+                                            [invoice.id]: filter,
+                                          }),
+                                        )
+                                      }
+                                      className={[
+                                        'rounded-lg border px-3 py-2 text-xs font-semibold transition',
+                                        reconciliationFilter === filter
+                                          ? 'border-blue-500 bg-blue-500/15 text-blue-300'
+                                          : 'border-slate-700 text-slate-400 hover:border-slate-600 hover:text-slate-200',
+                                      ].join(' ')}
+                                    >
+                                      {label} ({count})
+                                    </button>
+                                  ),
+                                )}
+                              </div>
+
+                              <div className="overflow-x-auto rounded-xl border border-slate-800">
+                                <table className="w-full min-w-[760px] text-left text-sm">
+                                  <thead className="border-b border-slate-800 bg-slate-950 text-xs uppercase text-slate-500">
+                                    <tr>
+                                      <th className="px-4 py-3">
+                                        Número de parte
+                                      </th>
+                                      <th className="px-4 py-3 text-right">
+                                        Factura
+                                      </th>
+                                      <th className="px-4 py-3 text-right">
+                                        Recepciones
+                                      </th>
+                                      <th className="px-4 py-3 text-right">
+                                        Diferencia
+                                      </th>
+                                      <th className="px-4 py-3 text-center">
+                                        Resultado
+                                      </th>
+                                    </tr>
+                                  </thead>
+
+                                  <tbody className="divide-y divide-slate-800 bg-slate-950">
+                                    {visibleReconciliationRows.map(
+                                      (row) => (
+                                        <tr key={row.key}>
+                                          <td className="px-4 py-3 font-semibold">
+                                            {row.partNumber}
+                                          </td>
+
+                                          <td className="px-4 py-3 text-right">
+                                            {formatReconciliationQuantity(
+                                              row.invoiceQuantity,
+                                            )}
+                                          </td>
+
+                                          <td className="px-4 py-3 text-right">
+                                            {formatReconciliationQuantity(
+                                              row.receivedQuantity,
+                                            )}
+                                          </td>
+
+                                          <td
+                                            className={[
+                                              'px-4 py-3 text-right font-bold',
+                                              row.difference === 0
+                                                ? 'text-slate-400'
+                                                : row.difference < 0
+                                                  ? 'text-red-400'
+                                                  : 'text-amber-400',
+                                            ].join(' ')}
+                                          >
+                                            {formatReconciliationDifference(
+                                              row.difference,
+                                            )}
+                                          </td>
+
+                                          <td className="px-4 py-3 text-center">
+                                            <span
+                                              className={[
+                                                'inline-flex rounded-full border px-2.5 py-1 text-xs font-bold',
+                                                reconciliationStatusClasses[
+                                                  row.status
+                                                ],
+                                              ].join(' ')}
+                                            >
+                                              {reconciliationStatusLabels[
+                                                row.status
+                                              ]}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      ),
+                                    )}
+
+                                    {visibleReconciliationRows.length === 0 && (
+                                      <tr>
+                                        <td
+                                          colSpan={5}
+                                          className="px-4 py-8 text-center text-slate-500"
+                                        >
+                                          No hay números de parte en este filtro.
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {imported && (
                         <div className="p-4">
                           <button
@@ -3684,6 +4106,18 @@ const saveInvoiceChanges =
         />
       )}
 
+      {scanningInvoice && (
+        <InvoiceLoadScanner
+          invoiceId={scanningInvoice.id}
+          invoiceNumber={scanningInvoice.invoice_number}
+          expectedLines={
+            getInvoiceImport(scanningInvoice)
+              ?.invoice_import_lines || []
+          }
+          onClose={() => setScanningInvoice(null)}
+        />
+      )}
+
       {invoiceViewerOpen && (
         <div
           className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-4"
@@ -3838,6 +4272,33 @@ const saveInvoiceChanges =
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function ReconciliationMetric({
+  label,
+  value,
+  className,
+}: {
+  label: string
+  value: number
+  className: string
+}) {
+  return (
+    <div
+      className={[
+        'rounded-xl border px-4 py-3',
+        className,
+      ].join(' ')}
+    >
+      <p className="text-xs font-semibold uppercase opacity-80">
+        {label}
+      </p>
+
+      <p className="mt-1 text-2xl font-bold">
+        {value}
+      </p>
     </div>
   )
 }
