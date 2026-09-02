@@ -1275,6 +1275,7 @@ const toggleNewInvoiceReception =
 const createNewInvoice =
   async () => {
     if (
+      newInvoiceMode !== 'csv' &&
       selectedReceptionIds.length ===
       0
     ) {
@@ -1331,7 +1332,7 @@ const createNewInvoice =
 
       setSuccessMessage(
         newInvoiceMode === 'csv' && newInvoiceImportData
-          ? `La factura ${result.invoiceNumber} se importó con ${newInvoiceImportData.lines.length} partidas y ${receptionCount} recepción(es).`
+          ? `La factura ${result.invoiceNumber} se importó con ${newInvoiceImportData.lines.length} partidas. Ya puedes agregar números de parte con el escáner.`
           : `La factura ${result.invoiceNumber} se creó correctamente con ${receptionCount} recepción(es).`,
       )
 
@@ -2850,7 +2851,7 @@ const saveInvoiceChanges =
                             className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950"
                           >
                             <ScanBarcode size={18} />
-                            Verificar carga
+                            Agregar números de parte
                           </button>
                         )}
 
@@ -3528,7 +3529,7 @@ const saveInvoiceChanges =
       <div className="flex items-center justify-between gap-4 border-b border-slate-700 px-5 py-4">
         <div>
           <p className="text-sm text-slate-400">
-            Paso {newInvoiceStep} de 2
+            Paso {newInvoiceMode === 'csv' ? 1 : newInvoiceStep} de {newInvoiceMode === 'csv' ? 1 : 2}
           </p>
 
           <h2 className="mt-1 text-xl font-bold">
@@ -3970,7 +3971,7 @@ const saveInvoiceChanges =
       </div>
 
       <div className="flex flex-col-reverse gap-3 border-t border-slate-700 px-5 py-4 sm:flex-row sm:justify-end">
-        {newInvoiceStep ===
+        {newInvoiceMode !== 'csv' && newInvoiceStep ===
         2 && (
           <button
             type="button"
@@ -4009,21 +4010,31 @@ const saveInvoiceChanges =
           <button
             type="button"
             disabled={
+              creatingInvoice ||
               loadingAvailableReceptions ||
               (newInvoiceMode === 'csv' &&
                 (!newInvoiceImportData ||
                   !newInvoiceImportData.valid))
             }
-            onClick={() =>
+            onClick={() => {
+              if (newInvoiceMode === 'csv') {
+                void createNewInvoice()
+                return
+              }
+
               void continueToReceptionSelection()
-            }
+            }}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-500 px-5 py-3 font-bold text-slate-950 disabled:opacity-40"
           >
-            {loadingAvailableReceptions
+            {creatingInvoice
+              ? 'Guardando factura...'
+              : loadingAvailableReceptions
               ? 'Cargando...'
-              : 'Continuar'}
+              : newInvoiceMode === 'csv'
+                ? 'Guardar factura'
+                : 'Continuar'}
 
-            {!loadingAvailableReceptions && (
+            {!creatingInvoice && !loadingAvailableReceptions && newInvoiceMode !== 'csv' && (
               <ArrowRight size={18} />
             )}
           </button>

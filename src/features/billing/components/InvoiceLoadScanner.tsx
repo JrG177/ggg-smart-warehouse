@@ -619,13 +619,13 @@ export function InvoiceLoadScanner({
       className="fixed inset-0 z-[180] overflow-y-auto bg-slate-950 text-white"
       role="dialog"
       aria-modal="true"
-      aria-label={`Verificar carga ${invoiceNumber}`}
+      aria-label={`Agregar números de parte ${invoiceNumber}`}
     >
       <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase text-emerald-400">
-              Verificación física de carga
+              Agregar números de parte
             </p>
             <h2 className="text-xl font-bold">
               {invoiceNumber}
@@ -687,7 +687,7 @@ export function InvoiceLoadScanner({
                   className="mt-0.5 shrink-0 text-emerald-400"
                   size={19}
                 />
-                Apunta al QR de GGG o al código único 3S/4S. El número P por sí solo no identifica una caja individual.
+                Escanea el código P del número de parte. También puedes usar el QR de GGG o el código único 3S/4S cuando estén disponibles.
               </p>
 
               <form
@@ -703,7 +703,7 @@ export function InvoiceLoadScanner({
                   onChange={(event) =>
                     setManualCode(event.target.value)
                   }
-                  placeholder="Prueba manual: GGG-... o 3S..."
+                  placeholder="Prueba manual: P580-0731"
                   className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 outline-none focus:border-emerald-500"
                 />
                 <button

@@ -272,6 +272,83 @@ export async function scanInvoicePackage(
   invoiceId: string,
   rawCode: string,
 ): Promise<InvoiceLoadScanOutcome> {
+  const cleanedInput = cleanScanCode(rawCode)
+
+  if (!cleanedInput) {
+    throw new Error('El escaneo está vacío.')
+  }
+
+  if (cleanedInput.startsWith('P') && cleanedInput.length > 1) {
+    const partNumber = cleanedInput.slice(1).trim()
+    const { expectedQuantity, scannedQuantity } =
+      await getExpectedAndScannedQuantity(invoiceId, partNumber)
+
+    if (expectedQuantity <= 0) {
+      const message = `NO SE VA: la parte ${partNumber} no aparece en la factura.`
+      const scan = await insertScan({
+        invoiceId,
+        packageRecord: null,
+        rawCode: cleanedInput,
+        partNumber,
+        quantity: 0,
+        result: 'not_in_invoice',
+        message,
+      })
+
+      return {
+        scan,
+        expectedQuantity: 0,
+        scannedQuantity,
+        remainingQuantity: 0,
+        trackingCode: null,
+      }
+    }
+
+    if (scannedQuantity + 1 > expectedQuantity + 0.0001) {
+      const message = `CANTIDAD COMPLETA: ya se registraron ${expectedQuantity} de ${partNumber}.`
+      const scan = await insertScan({
+        invoiceId,
+        packageRecord: null,
+        rawCode: cleanedInput,
+        partNumber,
+        quantity: 0,
+        result: 'quantity_exceeded',
+        message,
+      })
+
+      return {
+        scan,
+        expectedQuantity,
+        scannedQuantity,
+        remainingQuantity: 0,
+        trackingCode: null,
+      }
+    }
+
+    const nextScannedQuantity = roundQuantity(scannedQuantity + 1)
+    const remainingQuantity = roundQuantity(expectedQuantity - nextScannedQuantity)
+    const message = remainingQuantity <= 0
+      ? `SE VA: ${partNumber} quedó completo.`
+      : `SE VA: ${partNumber} agregado. Faltan ${remainingQuantity}.`
+    const scan = await insertScan({
+      invoiceId,
+      packageRecord: null,
+      rawCode: cleanedInput,
+      partNumber,
+      quantity: 1,
+      result: 'accepted',
+      message,
+    })
+
+    return {
+      scan,
+      expectedQuantity,
+      scannedQuantity: nextScannedQuantity,
+      remainingQuantity,
+      trackingCode: null,
+    }
+  }
+
   const {
     cleaned,
     packageRecord,

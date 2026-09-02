@@ -75,11 +75,13 @@ function validateInvoiceInformation({
   carrier,
   packageCount,
   receptionIds,
+  allowNoReceptions = false,
 }: {
   invoiceNumber: string
   carrier: string
   packageCount: number
   receptionIds: string[]
+  allowNoReceptions?: boolean
 }) {
   if (
     !invoiceNumber ||
@@ -108,6 +110,7 @@ function validateInvoiceInformation({
   }
 
   if (
+    !allowNoReceptions &&
     receptionIds.length === 0
   ) {
     throw new Error(
@@ -395,6 +398,8 @@ export async function createInvoiceWithReceptions(
       input.packageCount,
     receptionIds:
       input.receptionIds,
+    allowNoReceptions:
+      Boolean(input.importData),
   })
 
   if (input.photos.length === 0 && !input.importData) {
@@ -483,16 +488,34 @@ export async function createInvoiceWithReceptions(
         }
       : null
 
+    const rpcName = input.importData && input.receptionIds.length === 0
+      ? 'create_imported_invoice_without_receptions'
+      : input.importData
+        ? 'create_imported_invoice_with_receptions'
+        : 'create_invoice_with_receptions'
+
+    const rpcArguments =
+      rpcName === 'create_imported_invoice_without_receptions' && importArguments
+        ? {
+            p_invoice_id: importArguments.p_invoice_id,
+            p_invoice_number: importArguments.p_invoice_number,
+            p_carrier: importArguments.p_carrier,
+            p_package_count: importArguments.p_package_count,
+            p_photo_paths: importArguments.p_photo_paths,
+            p_import_header: importArguments.p_import_header,
+            p_import_lines: importArguments.p_import_lines,
+            p_source_documents: importArguments.p_source_documents,
+          }
+        : importArguments || standardArguments
+
     const {
       data,
       error,
     } = await (
       supabase.rpc as any
     )(
-      input.importData
-        ? 'create_imported_invoice_with_receptions'
-        : 'create_invoice_with_receptions',
-      importArguments || standardArguments,
+      rpcName,
+      rpcArguments,
     )
 
     if (error) {
