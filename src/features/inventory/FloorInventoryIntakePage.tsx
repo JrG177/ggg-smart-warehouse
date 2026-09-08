@@ -131,7 +131,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
 
     setSaving(true)
     try {
-      await createReception({
+      const savedReception = await createReception({
         carrier,
         otherCarrier,
         trailer,
@@ -158,7 +158,12 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
           completed: true,
         }],
       })
-      setSuccess(`Entrada guardada: ${lines.length} partes y ${totalBultos} bultos.`)
+      const photoUploadFailed = Boolean(savedReception.photo_upload_warnings?.length)
+      if (photoUploadFailed) {
+        setError(`La entrada se guardó, pero alguna foto falló: ${savedReception.photo_upload_warnings.join(' | ')}`)
+      } else {
+        setSuccess(`Entrada y ${palletPhotos.length + packingListPhotos.length} foto(s) guardadas: ${lines.length} partes y ${totalBultos} bultos.`)
+      }
       setLines([])
       setScanHistory([])
       setTrailer('')
@@ -166,7 +171,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       packingListPhotos.forEach((photo) => URL.revokeObjectURL(photo.preview))
       setPalletPhotos([])
       setPackingListPhotos([])
-      onSaved?.()
+      if (!photoUploadFailed) onSaved?.()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudo guardar la entrada.')
     } finally {
@@ -261,6 +266,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
           ] as const).map(([label, photos, setter]) => (
             <section key={label} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
               <p className="text-sm font-bold text-white">{label}</p>
+              <p className="mt-1 text-xs text-slate-500">Puedes tomar o seleccionar varias fotos. Se conservarán todas.</p>
               <label className="mt-3 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl border border-slate-700 px-4 text-sm font-semibold text-slate-300">
                 <ImagePlus size={18} /> Tomar o agregar foto
                 <input type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={(event) => { addPhotos(event.target.files, setter); event.target.value = '' }} />
@@ -271,6 +277,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
                   <button type="button" aria-label="Eliminar foto" onClick={() => removePhoto(index, setter)} className="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-white"><X size={14} /></button>
                 </div>)}
               </div>}
+              <p className="mt-3 text-xs font-semibold text-emerald-400">{photos.length} foto(s) seleccionada(s)</p>
             </section>
           ))}
         </div>

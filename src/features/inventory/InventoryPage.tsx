@@ -47,6 +47,12 @@ type PalletPart = {
   packages: number | null
 }
 
+type PalletPhoto = {
+  id: string
+  photo_type: string
+  storage_path: string
+}
+
 type ReceptionInfo = {
   id: string
   reception_number: string | null
@@ -72,6 +78,7 @@ type InventoryPallet = {
     | ReceptionInfo[]
     | null
   pallet_parts: PalletPart[]
+  pallet_photos: PalletPhoto[]
 }
 
 type OpenInvoice = {
@@ -469,6 +476,11 @@ export function InventoryPage({
               part_number,
               quantity,
               packages
+            ),
+            pallet_photos (
+              id,
+              photo_type,
+              storage_path
             )
           `)
           .eq('is_archived', false)
@@ -2016,9 +2028,19 @@ export function InventoryPage({
                                                 ),
                                               )}
                                             </div>
+
+                                            <p className="mt-3 text-xs font-semibold text-slate-400">
+                                              {pallet.pallet_photos?.length || 0} evidencia(s) fotográfica(s)
+                                            </p>
                                           </div>
 
                                           <div className="flex shrink-0 gap-2">
+                                            <a
+                                              href={`/operations/receiving/${pallet.reception_id}`}
+                                              className="inline-flex h-9 items-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-300"
+                                            >
+                                              Ver fotos
+                                            </a>
                                             <button
                                               type="button"
                                               title="Descargar PDF individual"
