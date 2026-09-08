@@ -38,6 +38,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerMode, setScannerMode] = useState<'zebra' | 'camera'>('zebra')
   const [saving, setSaving] = useState(false)
+  const [saveStage, setSaveStage] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [palletPhotos, setPalletPhotos] = useState<EvidencePhoto[]>([])
@@ -112,24 +113,30 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   async function saveIntake() {
     setError('')
     setSuccess('')
+    setSaveStage('Revisando información…')
     if (!carrier || (carrier === 'Other' && !otherCarrier.trim())) {
       setError('Selecciona el carrier antes de guardar.')
+      setSaveStage('')
       return
     }
     if (lines.length === 0 || totalBultos < 1) {
       setError('Agrega por lo menos un número de parte y un bulto.')
+      setSaveStage('')
       return
     }
     if (lines.some((line) => line.quantity < 1 || line.bultos < 1)) {
       setError('Cada parte debe conservar por lo menos una unidad y un bulto.')
+      setSaveStage('')
       return
     }
     if (!palletPhotos.length || !packingListPhotos.length) {
       setError('Agrega por lo menos una foto de la tarima y una del packing list.')
+      setSaveStage('')
       return
     }
 
     setSaving(true)
+    setSaveStage(`Guardando recepción y subiendo ${palletPhotos.length + packingListPhotos.length} foto(s)…`)
     try {
       const savedReception = await createReception({
         carrier,
@@ -164,6 +171,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       } else {
         setSuccess(`Entrada y ${palletPhotos.length + packingListPhotos.length} foto(s) guardadas: ${lines.length} partes y ${totalBultos} bultos.`)
       }
+      setSaveStage('')
       setLines([])
       setScanHistory([])
       setTrailer('')
@@ -174,6 +182,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       if (!photoUploadFailed) onSaved?.()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudo guardar la entrada.')
+      setSaveStage('')
     } finally {
       setSaving(false)
     }
@@ -287,7 +296,13 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
             <button type="button" onClick={undoLastScan} disabled={!scanHistory.length} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold text-slate-300 disabled:opacity-40"><Minus size={18} />Deshacer último</button>
             <button type="button" onClick={() => { setLines([]); setScanHistory([]) }} disabled={!lines.length} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold text-slate-300 disabled:opacity-40"><RotateCcw size={18} />Limpiar</button>
           </div>
-          <button type="button" onClick={() => void saveIntake()} disabled={saving || !lines.length} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 font-bold text-white disabled:opacity-40"><PackagePlus size={20} />{saving ? 'Guardando…' : 'Guardar en inventario'}</button>
+          <button type="button" onClick={() => void saveIntake()} disabled={saving} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 font-bold text-white disabled:cursor-wait disabled:opacity-60"><PackagePlus size={20} />{saving ? 'Guardando y subiendo fotos…' : 'Guardar en inventario'}</button>
+        </div>
+
+        <div aria-live="polite" className="space-y-2">
+          {saveStage && <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm font-semibold text-blue-300">{saveStage}</div>}
+          {error && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-400">No se guardó: {error}</div>}
+          {!saving && !error && <p className="text-xs text-slate-500">Para guardar necesitas carrier, al menos una parte, una foto de tarima y una foto de packing list.</p>}
         </div>
       </div> : <div className="p-8 text-center text-sm text-slate-500">Selecciona el tipo de recepción para comenzar.</div>}
 
