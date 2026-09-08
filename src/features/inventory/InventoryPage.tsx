@@ -19,8 +19,10 @@ import {
   Search,
   ShieldAlert,
   Trash2,
+  Download,
   X,
 } from 'lucide-react'
+import { jsPDF } from 'jspdf'
 
 import { supabase } from '../../lib/supabase'
 
@@ -251,6 +253,53 @@ function summarizeValues(
   }
 
   return `${uniqueValues.length} estados`
+}
+
+function downloadInventoryPdf(group: DailyReceptionGroup, onlyPallet?: InventoryPallet) {
+  const doc = new jsPDF()
+  const selectedPallets = onlyPallet ? [onlyPallet] : group.pallets
+  const selectedParts = new Map<string, AggregatedPart>()
+
+  selectedPallets.forEach((pallet) => pallet.pallet_parts.forEach((part) => {
+    const current = selectedParts.get(part.part_number) || { part_number: part.part_number, quantity: 0, packages: 0 }
+    current.quantity += Number(part.quantity || 0)
+    current.packages += Number(part.packages || 0)
+    selectedParts.set(part.part_number, current)
+  }))
+
+  const reception = onlyPallet ? getReception(onlyPallet) : null
+  const title = reception?.reception_number || group.identifier
+  doc.setFontSize(18)
+  doc.text('GGG - Registro de inventario', 14, 18)
+  doc.setFontSize(12)
+  doc.text(`Identificador: ${title}`, 14, 30)
+  doc.text(`Carrier: ${group.carrier}`, 14, 38)
+  doc.text(`Fecha: ${formatDate(group.receptionDate)}`, 14, 46)
+  if (reception?.trailer) doc.text(`Trailer: ${reception.trailer}`, 14, 54)
+
+  let y = reception?.trailer ? 68 : 60
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.text('Numero de parte', 14, y)
+  doc.text('Cantidad', 116, y)
+  doc.text('Bultos', 160, y)
+  doc.setFont('helvetica', 'normal')
+
+  Array.from(selectedParts.values()).forEach((part) => {
+    y += 8
+    if (y > 278) {
+      doc.addPage()
+      y = 18
+    }
+    doc.text(part.part_number, 14, y)
+    doc.text(String(part.quantity), 116, y)
+    doc.text(String(part.packages), 160, y)
+  })
+
+  y += 12
+  doc.setFont('helvetica', 'bold')
+  doc.text(`Totales: ${selectedPallets.length} registro(s) | ${Array.from(selectedParts.values()).reduce((sum, part) => sum + part.packages, 0)} bultos`, 14, y)
+  doc.save(`${title.replace(/[^A-Za-z0-9_-]+/g, '-')}.pdf`)
 }
 
 type InventoryPageProps = {
@@ -1779,6 +1828,15 @@ export function InventoryPage({
                             <div className="flex flex-col items-center gap-2">
                               <button
                                 type="button"
+                                onClick={() => downloadInventoryPdf(group)}
+                                className="inline-flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-300 transition hover:bg-blue-500/20"
+                              >
+                                <Download size={15} />
+                                PDF del día
+                              </button>
+
+                              <button
+                                type="button"
                                 onClick={() =>
                                   toggleGroup(
                                     group.key,
@@ -1960,25 +2018,26 @@ export function InventoryPage({
                                             </div>
                                           </div>
 
-                                          <button
-                                            type="button"
-                                            title="Archivar registro"
-                                            aria-label="Archivar registro"
-                                            disabled={
-                                              updatingPalletId ===
-                                              pallet.id
-                                            }
-                                            onClick={() =>
-                                              void archivePallet(
-                                                pallet,
-                                              )
-                                            }
-                                            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 transition hover:bg-red-500/20 disabled:opacity-40"
-                                          >
-                                            <Trash2
-                                              size={16}
-                                            />
-                                          </button>
+                                          <div className="flex shrink-0 gap-2">
+                                            <button
+                                              type="button"
+                                              title="Descargar PDF individual"
+                                              onClick={() => downloadInventoryPdf(group, pallet)}
+                                              className="inline-flex h-9 items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 text-xs font-semibold text-blue-300"
+                                            >
+                                              <Download size={15} /> PDF
+                                            </button>
+                                            <button
+                                              type="button"
+                                              title="Archivar registro"
+                                              aria-label="Archivar registro"
+                                              disabled={updatingPalletId === pallet.id}
+                                              onClick={() => void archivePallet(pallet)}
+                                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 transition hover:bg-red-500/20 disabled:opacity-40"
+                                            >
+                                              <Trash2 size={16} />
+                                            </button>
+                                          </div>
                                         </div>
 
                                         <div className="mt-4 grid gap-3 md:grid-cols-3">

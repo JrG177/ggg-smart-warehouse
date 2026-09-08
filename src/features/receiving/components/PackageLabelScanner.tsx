@@ -19,6 +19,8 @@ import type { QuickReceptionPackageInput } from '../../../services/quickReceivin
 type PackageLabelScannerProps = {
   onClose: () => void
   onSave: (item: QuickReceptionPackageInput) => void
+  continuousPartMode?: boolean
+  preferHardwareScanner?: boolean
 }
 
 type ScanField = 'P' | 'K' | 'Q' | 'V' | '3S' | '4S'
@@ -209,7 +211,10 @@ async function decodeImage(imageData: ImageData) {
 export function PackageLabelScanner({
   onClose,
   onSave,
+  continuousPartMode = false,
+  preferHardwareScanner = false,
 }: PackageLabelScannerProps) {
+  const hardwareScannerPreferred = preferHardwareScanner
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -237,7 +242,7 @@ export function PackageLabelScanner({
 
     if (
       cleaned === lastScanRef.current.value &&
-      now - lastScanRef.current.time < 1500
+      now - lastScanRef.current.time < (continuousPartMode ? 700 : 1500)
     ) {
       return
     }
@@ -253,6 +258,24 @@ export function PackageLabelScanner({
           : scanTargetRef.current
         setMessage(`Buscando ${expected}. El código ${field} se ignoró para no mezclar datos.`)
         setMessageType('neutral')
+        return
+      }
+
+      if (continuousPartMode) {
+        if (field !== 'P') return
+
+        onSave({
+          partNumber: value.trim().toUpperCase(),
+          purchaseOrder: '',
+          quantity: null,
+          supplierCode: '',
+          supplierPackageId: '',
+          supplierPackageType: null,
+          rawCodes: { P: rawCode },
+        })
+        setMessage(`Parte ${value} agregada. Continúa con la siguiente label.`)
+        setMessageType('success')
+        navigator.vibrate?.([80, 45, 80])
         return
       }
 
@@ -277,7 +300,7 @@ export function PackageLabelScanner({
       )
       setMessageType('error')
     }
-  }, [updateDraft])
+  }, [continuousPartMode, onSave, updateDraft])
 
   const confirmRawScan = useCallback((rawValue: string, immediate = false) => {
     const cleaned = cleanRawCode(rawValue)
@@ -356,6 +379,15 @@ export function PackageLabelScanner({
       }
     }
 
+    if (hardwareScannerPreferred) {
+      setCameraStatus('ready')
+      setMessage('Zebra listo. Usa el gatillo lateral para escanear códigos P.')
+      return () => {
+        cancelled = true
+        window.clearInterval(timer)
+      }
+    }
+
     void navigator.mediaDevices
       .getUserMedia({
         audio: false,
@@ -407,7 +439,7 @@ export function PackageLabelScanner({
       streamRef.current?.getTracks().forEach((track) => track.stop())
       streamRef.current = null
     }
-  }, [confirmRawScan])
+  }, [confirmRawScan, hardwareScannerPreferred])
 
   useEffect(() => {
     function handleExternalScanner(event: KeyboardEvent) {
@@ -545,9 +577,11 @@ export function PackageLabelScanner({
         <header className="flex items-center justify-between border-b border-slate-800 px-4 py-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-400">
-              Nuevo paquete
+              {continuousPartMode ? 'Conteo de descarga' : 'Nuevo paquete'}
             </p>
-            <h2 className="text-lg font-bold text-white">Escanear label</h2>
+            <h2 className="text-lg font-bold text-white">
+              {continuousPartMode ? 'Agregar números de parte' : 'Escanear label'}
+            </h2>
           </div>
           <button
             type="button"
@@ -561,6 +595,13 @@ export function PackageLabelScanner({
 
         <div className="p-4">
           <div className="relative overflow-hidden rounded-2xl bg-black">
+            {hardwareScannerPreferred ? (
+              <div className="flex aspect-[4/3] flex-col items-center justify-center px-6 text-center">
+                <ScanBarcode size={64} className="text-emerald-400" />
+                <p className="mt-4 text-xl font-bold text-white">TC57 listo para escanear</p>
+                <p className="mt-2 text-sm text-slate-400">Presiona el gatillo. DataWedge debe enviar el código seguido de Enter.</p>
+              </div>
+            ) : <>
             <video
               ref={videoRef}
               muted
@@ -575,6 +616,7 @@ export function PackageLabelScanner({
                 Abriendo cámara…
               </div>
             )}
+            </>}
           </div>
 
           <input
@@ -589,7 +631,7 @@ export function PackageLabelScanner({
             }}
           />
 
-          <button
+          {!hardwareScannerPreferred && <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={photoBusy}
@@ -597,7 +639,7 @@ export function PackageLabelScanner({
           >
             {photoBusy ? <LoaderCircle className="animate-spin" size={18} /> : <ImageUp size={18} />}
             {photoBusy ? 'Analizando foto…' : 'Tomar foto para código difícil'}
-          </button>
+          </button>}
 
           <div className={[
             'mt-3 rounded-xl border px-3 py-2.5 text-sm font-semibold',
@@ -610,7 +652,7 @@ export function PackageLabelScanner({
             {message}
           </div>
 
-          <div className="mt-4">
+          {!continuousPartMode && <div className="mt-4">
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm font-semibold text-slate-300">
                 ¿Qué código vas a escanear?
@@ -649,9 +691,9 @@ export function PackageLabelScanner({
                 )
               })}
             </div>
-          </div>
+          </div>}
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {!continuousPartMode && <div className="mt-4 grid gap-3 sm:grid-cols-2">
             <label className="text-sm font-semibold text-slate-300">
               Número de parte (P) <span className="text-red-400">*</span>
               <input
@@ -718,29 +760,31 @@ export function PackageLabelScanner({
                 className={inputClass}
               />
             </label>
-          </div>
+          </div>}
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className={continuousPartMode ? 'mt-5' : 'mt-5 grid gap-3 sm:grid-cols-2'}>
             <button
               type="button"
               onClick={onClose}
               className="min-h-12 rounded-xl border border-slate-700 px-4 font-semibold text-slate-300"
             >
-              Cancelar
+              {continuousPartMode ? 'Terminar escaneo' : 'Cancelar'}
             </button>
-            <button
+            {!continuousPartMode && <button
               type="button"
               onClick={savePackage}
               className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 font-bold text-slate-950"
             >
               {draft.partNumber ? <Check size={20} /> : <ScanBarcode size={20} />}
               Agregar paquete
-            </button>
+            </button>}
           </div>
 
           <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-slate-500">
             <Barcode className="mt-0.5 shrink-0" size={16} />
-            Motor ZXing-C++ de alta precisión. Solo se analiza el área verde y se confirma cada lectura dos veces. También acepta lectores Zebra, Bluetooth o USB configurados para enviar Enter. Puedes corregir cualquier campo manualmente.
+            {continuousPartMode
+              ? 'Escanea el código P de cada bulto. Cada lectura suma un bulto y permanece en la lista; también acepta lectores Zebra, Bluetooth o USB configurados para enviar Enter.'
+              : 'Motor ZXing-C++ de alta precisión. Solo se analiza el área verde y se confirma cada lectura dos veces. También acepta lectores Zebra, Bluetooth o USB configurados para enviar Enter. Puedes corregir cualquier campo manualmente.'}
           </p>
         </div>
       </div>

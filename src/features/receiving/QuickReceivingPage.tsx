@@ -204,7 +204,11 @@ function PhotoPreview({ file, disabled, onRemove }: PhotoPreviewProps) {
 export function QuickReceivingPage() {
   const navigate = useNavigate()
   const [client, setClient] =
-    useState<QuickReceptionClient>('A1')
+    useState<QuickReceptionClient>(() =>
+      new URLSearchParams(window.location.search).get('client') === 'UPS'
+        ? 'UPS'
+        : 'A1',
+    )
   const [photos, setPhotos] = useState<
     Partial<Record<QuickPhotoType, File[]>>
   >({})
@@ -217,6 +221,7 @@ export function QuickReceivingPage() {
   const [packages, setPackages] = useState<CapturedPackage[]>([])
   const [savedPackages, setSavedPackages] = useState<WarehousePackage[]>([])
   const [scannerOpen, setScannerOpen] = useState(false)
+  const [scannerMode, setScannerMode] = useState<'zebra' | 'camera'>('zebra')
 
   const clientRequirements = requirements[client]
 
@@ -478,6 +483,7 @@ export function QuickReceivingPage() {
     <div className="mx-auto max-w-3xl pb-28 sm:pb-8">
       {scannerOpen && (
         <PackageLabelScanner
+          preferHardwareScanner={scannerMode === 'zebra'}
           onClose={() => setScannerOpen(false)}
           onSave={addPackage}
         />
@@ -537,15 +543,21 @@ export function QuickReceivingPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => setScannerOpen(true)}
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 text-sm font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-60"
-            >
-              <ScanBarcode size={20} />
-              Nuevo paquete
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <select value={scannerMode} onChange={(event) => setScannerMode(event.target.value as 'zebra' | 'camera')} className="min-h-12 rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm font-semibold text-white">
+                <option value="zebra">Zebra / lector</option>
+                <option value="camera">Cámara</option>
+              </select>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setScannerOpen(true)}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 text-sm font-bold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-60"
+              >
+                <ScanBarcode size={20} />
+                Nuevo paquete
+              </button>
+            </div>
           </div>
 
           {packages.length > 0 && (

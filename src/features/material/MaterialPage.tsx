@@ -2,13 +2,16 @@ import {
   Boxes,
   History,
   PackagePlus,
+  ScanBarcode,
 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
+import { FloorInventoryIntakePage } from '../inventory/FloorInventoryIntakePage'
 import { InventoryPage } from '../inventory/InventoryPage'
 import { QuickReceivingHistoryPage } from '../receiving/QuickReceivingHistoryPage'
 import { ReceivingPage } from '../receiving/ReceivingPage'
 
 type MaterialView =
+  | 'intake'
   | 'receiving'
   | 'inventory'
   | 'history'
@@ -19,6 +22,12 @@ const materialTabs: Array<{
   helper: string
   icon: typeof PackagePlus
 }> = [
+  {
+    view: 'intake',
+    label: 'Registrar descarga',
+    helper: 'Escaneo continuo para Zebra o celular',
+    icon: ScanBarcode,
+  },
   {
     view: 'receiving',
     label: 'Recibir',
@@ -40,11 +49,11 @@ const materialTabs: Array<{
 ]
 
 function getMaterialView(value: string | null): MaterialView {
-  if (value === 'inventory' || value === 'history') {
+  if (value === 'receiving' || value === 'inventory' || value === 'history') {
     return value
   }
 
-  return 'receiving'
+  return 'intake'
 }
 
 export function MaterialPage() {
@@ -92,7 +101,7 @@ export function MaterialPage() {
         </p>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-3">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {materialTabs.map((tab) => {
           const Icon = tab.icon
           const active =
@@ -142,6 +151,10 @@ export function MaterialPage() {
 
       {currentView === 'receiving' && (
         <ReceivingPage embedded />
+      )}
+
+      {currentView === 'intake' && (
+        <FloorInventoryIntakePage onSaved={() => selectView('inventory')} />
       )}
 
       {currentView === 'inventory' && (
