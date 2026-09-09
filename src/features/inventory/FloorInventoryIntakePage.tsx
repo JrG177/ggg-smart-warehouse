@@ -77,9 +77,21 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
 
   function addPhotos(files: FileList | null, setter: Dispatch<SetStateAction<EvidencePhoto[]>>) {
     if (!files) return
+    const selectedFiles = Array.from(files).filter((file) => (
+      !file.type ||
+      file.type.startsWith('image/') ||
+      /\.(?:heic|heif|jpe?g|png|webp)$/i.test(file.name)
+    ))
+
+    if (!selectedFiles.length) {
+      setError('El TC57 no devolvió una imagen válida. Intenta tomar la foto nuevamente.')
+      return
+    }
+
+    setError('')
     setter((current) => [
       ...current,
-      ...Array.from(files).filter((file) => file.type.startsWith('image/')).map((file) => ({
+      ...selectedFiles.map((file) => ({
         file,
         preview: URL.createObjectURL(file),
       })),
