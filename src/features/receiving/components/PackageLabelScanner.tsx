@@ -290,7 +290,24 @@ export function PackageLabelScanner({
         setScanTarget(nextTarget)
         setMessage(`${fieldLabels[field]} capturado: ${value}. Continúa con ${nextTarget === 'PACKAGE' ? '3S/4S' : nextTarget}.`)
       } else {
-        setMessage(`${fieldLabels[field]} capturado: ${value}. Label completa; revisa y agrega el paquete.`)
+        const partNumber = nextDraft.partNumber.trim().toUpperCase()
+        onSave({
+          partNumber,
+          purchaseOrder: nextDraft.purchaseOrder.trim().toUpperCase(),
+          quantity: Number(nextDraft.quantity),
+          supplierCode: nextDraft.supplierCode.trim().toUpperCase(),
+          supplierPackageId: nextDraft.supplierPackageId.trim().toUpperCase(),
+          supplierPackageType: nextDraft.supplierPackageType || null,
+          rawCodes: nextDraft.rawCodes,
+        })
+        updateDraft({ ...EMPTY_DRAFT, rawCodes: {} })
+        scanTargetRef.current = 'P'
+        setScanTarget('P')
+        setHardwareInput('')
+        lastScanRef.current = { value: '', time: 0 }
+        candidateRef.current = { value: '', matches: 0, time: 0 }
+        setMessage(`Paquete ${partNumber} agregado. Escanea P de la siguiente label.`)
+        window.setTimeout(() => hardwareInputRef.current?.focus(), 0)
       }
       setMessageType('success')
       navigator.vibrate?.(120)
