@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { CheckCircle2, ImagePlus, Minus, PackagePlus, RotateCcw, ScanBarcode, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -37,6 +37,9 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   const [scanHistory, setScanHistory] = useState<string[]>([])
   const [scannerOpen, setScannerOpen] = useState(false)
   const [scannerMode, setScannerMode] = useState<'zebra' | 'camera'>('zebra')
+  const [scannerInput, setScannerInput] = useState('')
+  const [scannerMessage, setScannerMessage] = useState('')
+  const scannerInputRef = useRef<HTMLInputElement | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveStage, setSaveStage] = useState('')
   const [error, setError] = useState('')
@@ -67,6 +70,41 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
         ? { ...line, scannedBultos: line.scannedBultos + 1, bultos: line.bultos + 1, quantity: line.quantity + 1 }
         : line)
     })
+  }
+
+  function submitHardwareScan(rawValue: string) {
+    const cleaned = rawValue
+      .split('')
+      .filter((character) => {
+        const code = character.charCodeAt(0)
+        return code > 31 && code !== 127
+      })
+      .join('')
+      .trim()
+      .replace(/^\*|\*$/g, '')
+      .toUpperCase()
+
+    if (!cleaned) return
+
+    const partNumber = cleaned.startsWith('P') ? cleaned.slice(1).trim() : cleaned
+    if (!partNumber) {
+      setScannerMessage('La lectura no contiene un número de parte.')
+      return
+    }
+
+    addScan({
+      partNumber,
+      purchaseOrder: '',
+      quantity: null,
+      supplierCode: '',
+      supplierPackageId: '',
+      supplierPackageType: null,
+      rawCodes: { P: cleaned },
+    })
+    setScannerInput('')
+    setScannerMessage(`Parte ${partNumber} agregada.`)
+    navigator.vibrate?.([80, 40, 80])
+    window.setTimeout(() => scannerInputRef.current?.focus(), 0)
   }
 
   function updateLine(partNumber: string, field: 'bultos' | 'quantity', value: number) {
@@ -254,10 +292,47 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
             <option value="zebra">Zebra / lector físico</option>
             <option value="camera">Cámara del celular</option>
           </select>
-          <button type="button" onClick={() => setScannerOpen(true)} disabled={!carrier} className="inline-flex min-h-14 w-full items-center justify-center gap-3 rounded-xl bg-emerald-500 px-5 text-base font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
+          <button
+            type="button"
+            onClick={() => {
+              if (scannerMode === 'camera') setScannerOpen(true)
+              else scannerInputRef.current?.focus()
+            }}
+            disabled={!carrier}
+            className="inline-flex min-h-14 w-full items-center justify-center gap-3 rounded-xl bg-emerald-500 px-5 text-base font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
+          >
             <ScanBarcode size={23} /> Agregar números de parte
           </button>
         </div>
+
+        {scannerMode === 'zebra' && (
+          <section className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
+            <label className="text-sm font-bold text-white">
+              Escanear o escribir número de parte
+              <input
+                ref={scannerInputRef}
+                value={scannerInput}
+                autoComplete="off"
+                onChange={(event) => setScannerInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter' && event.key !== 'Tab') return
+                  event.preventDefault()
+                  submitHardwareScan(event.currentTarget.value)
+                }}
+                placeholder="Presiona el gatillo o escribe la parte y Enter"
+                className="mt-2 min-h-14 w-full rounded-xl border border-emerald-400 bg-slate-950 px-4 text-lg font-bold uppercase text-white outline-none focus:ring-4 focus:ring-emerald-400/20"
+              />
+            </label>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <p className={scannerMessage ? 'text-sm font-bold text-emerald-300' : 'text-sm text-slate-400'}>
+                {scannerMessage || 'Al recibir Enter, la parte aparecerá inmediatamente en la tabla.'}
+              </p>
+              <button type="button" onClick={() => submitHardwareScan(scannerInput)} className="min-h-11 rounded-xl bg-emerald-500 px-5 font-bold text-slate-950">
+                Agregar manualmente
+              </button>
+            </div>
+          </section>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><p className="text-xs uppercase text-slate-500">Lecturas</p><p className="mt-1 text-2xl font-bold text-white">{scanHistory.length}</p></div>
@@ -318,7 +393,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
         </div>
       </div> : <div className="p-8 text-center text-sm text-slate-500">Selecciona el tipo de recepción para comenzar.</div>}
 
-      {scannerOpen && <PackageLabelScanner continuousPartMode preferHardwareScanner={scannerMode === 'zebra'} onClose={() => setScannerOpen(false)} onSave={addScan} />}
+      {scannerOpen && <PackageLabelScanner continuousPartMode preferHardwareScanner={false} onClose={() => setScannerOpen(false)} onSave={addScan} />}
     </section>
   )
 }
