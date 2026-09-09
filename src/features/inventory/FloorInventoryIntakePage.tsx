@@ -86,7 +86,15 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
 
     if (!cleaned) return
 
-    const partNumber = cleaned.startsWith('P') ? cleaned.slice(1).trim() : cleaned
+    if (!cleaned.startsWith('P')) {
+      setScannerInput('')
+      setScannerMessage(`Código ${cleaned} ignorado. Escanea únicamente el código P.`)
+      navigator.vibrate?.(180)
+      window.setTimeout(() => scannerInputRef.current?.focus(), 0)
+      return
+    }
+
+    const partNumber = cleaned.slice(1).trim()
     if (!partNumber) {
       setScannerMessage('La lectura no contiene un número de parte.')
       return
