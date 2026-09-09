@@ -219,6 +219,7 @@ export function PackageLabelScanner({
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const hardwareInputRef = useRef<HTMLInputElement | null>(null)
   const draftRef = useRef<PackageDraft>(EMPTY_DRAFT)
   const lastScanRef = useRef({ value: '', time: 0 })
   const candidateRef = useRef({ value: '', matches: 0, time: 0 })
@@ -230,6 +231,7 @@ export function PackageLabelScanner({
   const scanTargetRef = useRef<ScanTarget>('P')
   const [message, setMessage] = useState('Seleccionado P: apunta solamente al código del número de parte.')
   const [messageType, setMessageType] = useState<'neutral' | 'success' | 'error'>('neutral')
+  const [hardwareInput, setHardwareInput] = useState('')
 
   const updateDraft = useCallback((next: PackageDraft) => {
     draftRef.current = next
@@ -442,6 +444,13 @@ export function PackageLabelScanner({
   }, [confirmRawScan, hardwareScannerPreferred])
 
   useEffect(() => {
+    if (!hardwareScannerPreferred) return
+
+    const timer = window.setTimeout(() => hardwareInputRef.current?.focus(), 50)
+    return () => window.clearTimeout(timer)
+  }, [hardwareScannerPreferred, scanTarget])
+
+  useEffect(() => {
     function handleExternalScanner(event: KeyboardEvent) {
       const element = event.target as HTMLElement | null
       const isEditing = element?.tagName === 'INPUT' || element?.tagName === 'TEXTAREA' || element?.tagName === 'SELECT'
@@ -596,10 +605,35 @@ export function PackageLabelScanner({
         <div className="p-4">
           <div className="relative overflow-hidden rounded-2xl bg-black">
             {hardwareScannerPreferred ? (
-              <div className="flex aspect-[4/3] flex-col items-center justify-center px-6 text-center">
+              <div
+                className="flex aspect-[4/3] flex-col items-center justify-center px-6 text-center"
+                onClick={() => hardwareInputRef.current?.focus()}
+              >
                 <ScanBarcode size={64} className="text-emerald-400" />
                 <p className="mt-4 text-xl font-bold text-white">TC57 listo para escanear</p>
                 <p className="mt-2 text-sm text-slate-400">Presiona el gatillo. DataWedge debe enviar el código seguido de Enter.</p>
+                <label className="mt-5 w-full max-w-md text-left text-xs font-bold uppercase tracking-wide text-slate-400">
+                  Entrada del escáner
+                  <input
+                    ref={hardwareInputRef}
+                    value={hardwareInput}
+                    autoFocus
+                    autoComplete="off"
+                    inputMode="none"
+                    onChange={(event) => setHardwareInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== 'Tab') return
+
+                      event.preventDefault()
+                      const rawValue = event.currentTarget.value
+                      setHardwareInput('')
+                      if (rawValue.trim()) confirmRawScan(rawValue, true)
+                      window.setTimeout(() => hardwareInputRef.current?.focus(), 0)
+                    }}
+                    placeholder={`Esperando código ${scanTarget === 'PACKAGE' ? '3S/4S' : scanTarget}…`}
+                    className="mt-2 min-h-12 w-full rounded-xl border border-emerald-500/50 bg-slate-950 px-4 text-base font-semibold uppercase text-white outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
+                  />
+                </label>
               </div>
             ) : <>
             <video
