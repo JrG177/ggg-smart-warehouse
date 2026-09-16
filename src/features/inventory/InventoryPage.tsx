@@ -309,6 +309,35 @@ function downloadInventoryPdf(group: DailyReceptionGroup, onlyPallet?: Inventory
   doc.save(`${title.replace(/[^A-Za-z0-9_-]+/g, '-')}.pdf`)
 }
 
+function csvCell(value: unknown) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`
+}
+
+function downloadInventoryCsv(group: DailyReceptionGroup, onlyPallet?: InventoryPallet) {
+  const selectedPallets = onlyPallet ? [onlyPallet] : group.pallets
+  const rows = [['Fecha', 'Carrier', 'Recepcion', 'Pallet', 'Numero de parte', 'Cantidad', 'Bultos', 'Ubicacion']]
+  selectedPallets.forEach((pallet) => {
+    const reception = getReception(pallet)
+    pallet.pallet_parts.forEach((part) => rows.push([
+      group.receptionDate,
+      group.carrier,
+      reception?.reception_number || '',
+      String(pallet.pallet_number),
+      part.part_number,
+      String(part.quantity || 0),
+      String(part.packages || 0),
+      pallet.location_code || '',
+    ]))
+  })
+  const csv = `\uFEFF${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}`
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `${(onlyPallet ? getReception(onlyPallet)?.reception_number : group.identifier) || 'inventario'}.csv`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 type InventoryPageProps = {
   embedded?: boolean
 }
@@ -1847,6 +1876,10 @@ export function InventoryPage({
                                 PDF del día
                               </button>
 
+                              <button type="button" onClick={() => downloadInventoryCsv(group)} className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300">
+                                <FileCheck2 size={15} /> Excel del día
+                              </button>
+
                               <button
                                 type="button"
                                 onClick={() =>
@@ -2048,6 +2081,9 @@ export function InventoryPage({
                                               className="inline-flex h-9 items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 text-xs font-semibold text-blue-300"
                                             >
                                               <Download size={15} /> PDF
+                                            </button>
+                                            <button type="button" title="Descargar para Excel" onClick={() => downloadInventoryCsv(group, pallet)} className="inline-flex h-9 items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-300">
+                                              <FileCheck2 size={15} /> Excel
                                             </button>
                                             <button
                                               type="button"

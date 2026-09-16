@@ -15,6 +15,7 @@ import {
   FileImage,
   FileSpreadsheet,
   FileText,
+  Download,
   ImagePlus,
   Pencil,
   Plus,
@@ -24,6 +25,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { jsPDF } from 'jspdf'
 
 import { supabase } from '../../lib/supabase'
 
@@ -220,6 +222,52 @@ function getReception(
     ? item.receptions[0] ||
         null
     : item.receptions
+}
+
+function exportInvoiceCsv(invoice: Invoice) {
+  const imported = getInvoiceImport(invoice)
+  if (!imported) return
+  const rows = [['Linea', 'Numero de parte', 'Descripcion', 'Cantidad', 'Peso', 'Precio unitario', 'Total']]
+  imported.invoice_import_lines
+    .slice()
+    .sort((a, b) => a.line_number - b.line_number)
+    .forEach((line) => rows.push([
+      String(line.line_number), line.part_number, line.description || '',
+      String(line.commercial_quantity), String(line.weight), String(line.unit_price), String(line.total_price),
+    ]))
+  const quote = (value: string) => `"${value.replace(/"/g, '""')}"`
+  const csv = `\uFEFF${rows.map((row) => row.map(quote).join(',')).join('\r\n')}`
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = `${invoice.invoice_number}.csv`
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+function exportInvoicePdf(invoice: Invoice) {
+  const imported = getInvoiceImport(invoice)
+  if (!imported) return
+  const doc = new jsPDF()
+  doc.setFontSize(18)
+  doc.text('GGG - Factura importada', 14, 18)
+  doc.setFontSize(11)
+  doc.text(`Factura: ${invoice.invoice_number}`, 14, 29)
+  doc.text(`Carrier: ${invoice.carrier}`, 14, 37)
+  doc.text(`Partidas: ${imported.invoice_import_lines.length}`, 14, 45)
+  let y = 58
+  doc.setFont('helvetica', 'bold')
+  doc.text('Linea', 14, y); doc.text('Numero de parte', 34, y); doc.text('Cantidad', 135, y); doc.text('Total', 170, y)
+  doc.setFont('helvetica', 'normal')
+  imported.invoice_import_lines.slice().sort((a, b) => a.line_number - b.line_number).forEach((line) => {
+    y += 8
+    if (y > 278) { doc.addPage(); y = 18 }
+    doc.text(String(line.line_number), 14, y)
+    doc.text(line.part_number.slice(0, 35), 34, y)
+    doc.text(String(line.commercial_quantity), 135, y)
+    doc.text(String(line.total_price), 170, y)
+  })
+  doc.save(`${invoice.invoice_number}.pdf`)
 }
 
 function getInvoiceImport(invoice: Invoice) {
@@ -2854,6 +2902,9 @@ const saveInvoiceChanges =
                             Agregar números de parte
                           </button>
                         )}
+
+                        {imported && <button type="button" onClick={() => exportInvoicePdf(invoice)} className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300"><Download size={17} />PDF</button>}
+                        {imported && <button type="button" onClick={() => exportInvoiceCsv(invoice)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300"><FileSpreadsheet size={17} />Excel</button>}
 
                         {invoice.invoice_source_documents.map((document) => (
                           <button

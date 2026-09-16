@@ -4,6 +4,7 @@ import { CheckCircle2, ImagePlus, Minus, PackagePlus, RotateCcw, ScanBarcode, Tr
 import { useNavigate } from 'react-router-dom'
 import { PackageLabelScanner } from '../receiving/components/PackageLabelScanner'
 import { createReception } from '../../services/receivingService'
+import { createNormalReceptionPackages } from '../../services/normalReceptionPackageService'
 import type { QuickReceptionPackageInput } from '../../services/quickReceivingService'
 
 type IntakeLine = {
@@ -11,6 +12,8 @@ type IntakeLine = {
   scannedBultos: number
   bultos: number
   quantity: number
+  condition: 'good' | 'damaged' | 'missing_packing'
+  exceptionNotes: string
 }
 
 type EvidencePhoto = { file: File; preview: string }
@@ -39,6 +42,8 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   const [scannerMode, setScannerMode] = useState<'zebra' | 'camera'>('zebra')
   const [scannerInput, setScannerInput] = useState('')
   const [scannerMessage, setScannerMessage] = useState('')
+  const [scanTarget, setScanTarget] = useState<'P' | 'Q'>('P')
+  const [pendingPartNumber, setPendingPartNumber] = useState('')
   const scannerInputRef = useRef<HTMLInputElement | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveStage, setSaveStage] = useState('')
@@ -46,6 +51,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   const [success, setSuccess] = useState('')
   const [palletPhotos, setPalletPhotos] = useState<EvidencePhoto[]>([])
   const [packingListPhotos, setPackingListPhotos] = useState<EvidencePhoto[]>([])
+  const [osdPhotos, setOsdPhotos] = useState<EvidencePhoto[]>([])
 
   const totalBultos = useMemo(
     () => lines.reduce((total, line) => total + line.bultos, 0),
@@ -60,14 +66,15 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
     const partNumber = item.partNumber.trim().toUpperCase()
     if (!partNumber) return
 
-    setScanHistory((current) => [...current, partNumber])
+    const scannedQuantity = Math.max(1, Math.floor(Number(item.quantity || 1)))
+    setScanHistory((current) => [...current, `${partNumber}:${scannedQuantity}`])
     setLines((current) => {
       const existing = current.find((line) => line.partNumber === partNumber)
       if (!existing) {
-        return [...current, { partNumber, scannedBultos: 1, bultos: 1, quantity: 1 }]
+        return [...current, { partNumber, scannedBultos: 1, bultos: 1, quantity: scannedQuantity, condition: 'good', exceptionNotes: '' }]
       }
       return current.map((line) => line.partNumber === partNumber
-        ? { ...line, scannedBultos: line.scannedBultos + 1, bultos: line.bultos + 1, quantity: line.quantity + 1 }
+        ? { ...line, scannedBultos: line.scannedBultos + 1, bultos: line.bultos + 1, quantity: line.quantity + scannedQuantity }
         : line)
     })
   }
@@ -86,7 +93,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
 
     if (!cleaned) return
 
-    if (!cleaned.startsWith('P')) {
+    if (scanTarget === 'P' && !cleaned.startsWith('P')) {
       setScannerInput('')
       setScannerMessage(`Código ${cleaned} ignorado. Escanea únicamente el código P.`)
       navigator.vibrate?.(180)
@@ -94,23 +101,50 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       return
     }
 
-    const partNumber = cleaned.slice(1).trim()
-    if (!partNumber) {
+    if (scanTarget === 'P') {
+      const partNumber = cleaned.slice(1).trim()
+      if (!partNumber) {
+        setScannerMessage('El código P no contiene un número de parte.')
+        return
+      }
+
+      setPendingPartNumber(partNumber)
+      setScanTarget('Q')
+      setScannerInput('')
+      setScannerMessage(`Parte ${partNumber} capturada. Ahora escanea Q.`)
+      navigator.vibrate?.(100)
+      window.setTimeout(() => scannerInputRef.current?.focus(), 0)
+      return
+    }
+
+    if (!cleaned.startsWith('Q')) {
+      setScannerInput('')
+      setScannerMessage(`Código ${cleaned} ignorado. Para ${pendingPartNumber} debes escanear Q.`)
+      navigator.vibrate?.(180)
+      window.setTimeout(() => scannerInputRef.current?.focus(), 0)
+      return
+    }
+
+    const quantityText = cleaned.slice(1).trim()
+    const quantity = Number(quantityText)
+    if (!pendingPartNumber || !Number.isInteger(quantity) || quantity < 1) {
       setScannerMessage('La lectura no contiene un número de parte.')
       return
     }
 
     addScan({
-      partNumber,
+      partNumber: pendingPartNumber,
       purchaseOrder: '',
-      quantity: null,
+      quantity,
       supplierCode: '',
       supplierPackageId: '',
       supplierPackageType: null,
-      rawCodes: { P: cleaned },
+      rawCodes: { P: `P${pendingPartNumber}`, Q: cleaned },
     })
     setScannerInput('')
-    setScannerMessage(`Parte ${partNumber} agregada.`)
+    setScannerMessage(`Parte ${pendingPartNumber}, cantidad ${quantity}, agregada.`)
+    setPendingPartNumber('')
+    setScanTarget('P')
     navigator.vibrate?.([80, 40, 80])
     window.setTimeout(() => scannerInputRef.current?.focus(), 0)
   }
@@ -118,6 +152,12 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   function updateLine(partNumber: string, field: 'bultos' | 'quantity', value: number) {
     setLines((current) => current.map((line) => line.partNumber === partNumber
       ? { ...line, [field]: Math.max(0, Math.floor(Number.isFinite(value) ? value : 0)) }
+      : line))
+  }
+
+  function updateCondition(partNumber: string, condition: IntakeLine['condition']) {
+    setLines((current) => current.map((line) => line.partNumber === partNumber
+      ? { ...line, condition, exceptionNotes: condition === 'good' ? '' : line.exceptionNotes }
       : line))
   }
 
@@ -153,8 +193,11 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   }
 
   function undoLastScan() {
-    const partNumber = scanHistory.at(-1)
-    if (!partNumber) return
+    const lastEntry = scanHistory.at(-1)
+    if (!lastEntry) return
+    const separator = lastEntry.lastIndexOf(':')
+    const partNumber = separator >= 0 ? lastEntry.slice(0, separator) : lastEntry
+    const scannedQuantity = separator >= 0 ? Number(lastEntry.slice(separator + 1)) || 1 : 1
     setScanHistory((current) => current.slice(0, -1))
     setLines((current) => current.flatMap((line) => {
       if (line.partNumber !== partNumber) return [line]
@@ -163,7 +206,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
         ...line,
         scannedBultos: line.scannedBultos - 1,
         bultos: Math.max(0, line.bultos - 1),
-        quantity: Math.max(0, line.quantity - 1),
+        quantity: Math.max(0, line.quantity - scannedQuantity),
       }]
     }))
   }
@@ -187,8 +230,19 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       setSaveStage('')
       return
     }
+    if (lines.some((line) => line.quantity < line.bultos)) {
+      setError('La cantidad total no puede ser menor que el número de bultos.')
+      setSaveStage('')
+      return
+    }
     if (!palletPhotos.length || !packingListPhotos.length) {
       setError('Agrega por lo menos una foto de la tarima y una del packing list.')
+      setSaveStage('')
+      return
+    }
+    const hasOsd = lines.some((line) => line.condition !== 'good')
+    if (hasOsd && !osdPhotos.length) {
+      setError('Agrega por lo menos una foto de evidencia para las partes enviadas a OS&D.')
       setSaveStage('')
       return
     }
@@ -205,7 +259,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
         receptionDate: localDate(),
         receptionTime: localTime(),
         pallets: [{
-          damaged: 'No',
+          damaged: hasOsd ? 'Sí' : 'No',
           notes: `Entrada directa a inventario. Lecturas P: ${scanHistory.length}. Bultos finales: ${totalBultos}.`,
           parts: lines.map((line) => ({
             partNumber: line.partNumber,
@@ -219,10 +273,28 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
             invoice: '',
             documentationComplete: 'No',
           },
-          photos: { packingList: packingListPhotos, palletLabel: [], palletPhoto: palletPhotos, bol: [], damage: [] },
+          photos: { packingList: packingListPhotos, palletLabel: [], palletPhoto: palletPhotos, bol: [], damage: osdPhotos },
           completed: true,
         }],
       })
+      const packageInputs = lines.flatMap((line) => {
+        const baseQuantity = Math.floor(line.quantity / line.bultos)
+        const remainder = line.quantity % line.bultos
+        return Array.from({ length: line.bultos }, (_, index) => ({
+          palletNumber: 1,
+          partNumber: line.partNumber,
+          purchaseOrder: '',
+          quantity: baseQuantity + (index < remainder ? 1 : 0),
+          supplierCode: '',
+          supplierPackageId: '',
+          supplierPackageType: null,
+          rawCodes: {},
+          conditionStatus: line.condition,
+          exceptionReason: line.condition === 'damaged' ? 'damage' as const : line.condition === 'missing_packing' ? 'missing_packing' as const : null,
+          exceptionNotes: line.exceptionNotes,
+        }))
+      })
+      await createNormalReceptionPackages(savedReception.id, packageInputs)
       const photoUploadFailed = Boolean(savedReception.photo_upload_warnings?.length)
       if (photoUploadFailed) {
         setError(`La entrada se guardó, pero alguna foto falló: ${savedReception.photo_upload_warnings.join(' | ')}`)
@@ -237,6 +309,8 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       packingListPhotos.forEach((photo) => URL.revokeObjectURL(photo.preview))
       setPalletPhotos([])
       setPackingListPhotos([])
+      osdPhotos.forEach((photo) => URL.revokeObjectURL(photo.preview))
+      setOsdPhotos([])
       if (!photoUploadFailed) onSaved?.()
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudo guardar la entrada.')
@@ -316,7 +390,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
         {scannerMode === 'zebra' && (
           <section className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
             <label className="text-sm font-bold text-white">
-              Escanear o escribir número de parte
+              {scanTarget === 'P' ? 'Escanear número de parte (P)' : `Escanear cantidad (Q) para ${pendingPartNumber}`}
               <input
                 ref={scannerInputRef}
                 value={scannerInput}
@@ -327,16 +401,16 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
                   event.preventDefault()
                   submitHardwareScan(event.currentTarget.value)
                 }}
-                placeholder="Presiona el gatillo o escribe la parte y Enter"
+                placeholder={scanTarget === 'P' ? 'Escanea P y presiona Enter' : 'Escanea Q y presiona Enter'}
                 className="mt-2 min-h-14 w-full rounded-xl border border-emerald-400 bg-slate-950 px-4 text-lg font-bold uppercase text-white outline-none focus:ring-4 focus:ring-emerald-400/20"
               />
             </label>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <p className={scannerMessage ? 'text-sm font-bold text-emerald-300' : 'text-sm text-slate-400'}>
-                {scannerMessage || 'Al recibir Enter, la parte aparecerá inmediatamente en la tabla.'}
+                {scannerMessage || 'Secuencia segura: primero P y después Q.'}
               </p>
               <button type="button" onClick={() => submitHardwareScan(scannerInput)} className="min-h-11 rounded-xl bg-emerald-500 px-5 font-bold text-slate-950">
-                Agregar manualmente
+                Procesar lectura
               </button>
             </div>
           </section>
@@ -350,13 +424,21 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
 
         {lines.length > 0 && <div className="overflow-x-auto rounded-xl border border-slate-800">
           <table className="min-w-full text-left">
-            <thead className="bg-slate-950 text-xs uppercase text-slate-500"><tr><th className="px-4 py-3">Número de parte</th><th className="px-4 py-3">Escaneos</th><th className="px-4 py-3">Bultos (editable)</th><th className="px-4 py-3">Cantidad (editable)</th><th /></tr></thead>
+            <thead className="bg-slate-950 text-xs uppercase text-slate-500"><tr><th className="px-4 py-3">Número de parte</th><th className="px-4 py-3">Escaneos</th><th className="px-4 py-3">Bultos (editable)</th><th className="px-4 py-3">Cantidad (editable)</th><th className="px-4 py-3">Condición</th><th /></tr></thead>
             <tbody className="divide-y divide-slate-800">
               {lines.map((line) => <tr key={line.partNumber}>
                 <td className="px-4 py-3 font-bold text-white">{line.partNumber}</td>
                 <td className="px-4 py-3 text-slate-300">{line.scannedBultos}</td>
                 <td className="px-4 py-3"><input type="number" min="1" value={line.bultos} onChange={(event) => updateLine(line.partNumber, 'bultos', Number(event.target.value))} className="h-11 w-24 rounded-lg border border-slate-700 bg-slate-950 px-3 text-white" /></td>
                 <td className="px-4 py-3"><input type="number" min="1" value={line.quantity} onChange={(event) => updateLine(line.partNumber, 'quantity', Number(event.target.value))} className="h-11 w-28 rounded-lg border border-slate-700 bg-slate-950 px-3 text-white" /></td>
+                <td className="px-4 py-3">
+                  <select value={line.condition} onChange={(event) => updateCondition(line.partNumber, event.target.value as IntakeLine['condition'])} className="h-11 rounded-lg border border-slate-700 bg-slate-950 px-2 text-white">
+                    <option value="good">Correcto</option>
+                    <option value="damaged">Dañado · OS&D</option>
+                    <option value="missing_packing">Sin packing · OS&D</option>
+                  </select>
+                  {line.condition !== 'good' && <input value={line.exceptionNotes} onChange={(event) => setLines((current) => current.map((item) => item.partNumber === line.partNumber ? { ...item, exceptionNotes: event.target.value } : item))} placeholder="Observaciones OS&D" className="mt-2 h-10 w-full rounded-lg border border-amber-500/40 bg-slate-950 px-2 text-white" />}
+                </td>
                 <td className="px-4 py-3 text-right"><button type="button" title="Eliminar parte" onClick={() => setLines((current) => current.filter((item) => item.partNumber !== line.partNumber))} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-red-500/30 text-red-400"><Trash2 size={17} /></button></td>
               </tr>)}
             </tbody>
@@ -367,6 +449,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
           {([
             ['Foto de tarima *', palletPhotos, setPalletPhotos],
             ['Packing list *', packingListPhotos, setPackingListPhotos],
+            ['Evidencia OS&D (obligatoria si hay daño/falta)', osdPhotos, setOsdPhotos],
           ] as const).map(([label, photos, setter]) => (
             <section key={label} className="rounded-xl border border-slate-800 bg-slate-950 p-4">
               <p className="text-sm font-bold text-white">{label}</p>
@@ -389,7 +472,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
         <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
           <div className="flex gap-2">
             <button type="button" onClick={undoLastScan} disabled={!scanHistory.length} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold text-slate-300 disabled:opacity-40"><Minus size={18} />Deshacer último</button>
-            <button type="button" onClick={() => { setLines([]); setScanHistory([]) }} disabled={!lines.length} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold text-slate-300 disabled:opacity-40"><RotateCcw size={18} />Limpiar</button>
+            <button type="button" onClick={() => { setLines([]); setScanHistory([]); setPendingPartNumber(''); setScanTarget('P'); setScannerInput(''); setScannerMessage('') }} disabled={!lines.length && !pendingPartNumber} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-slate-700 px-4 font-semibold text-slate-300 disabled:opacity-40"><RotateCcw size={18} />Limpiar</button>
           </div>
           <button type="button" onClick={() => void saveIntake()} disabled={saving} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 font-bold text-white disabled:cursor-wait disabled:opacity-60"><PackagePlus size={20} />{saving ? 'Guardando y subiendo fotos…' : 'Guardar en inventario'}</button>
         </div>

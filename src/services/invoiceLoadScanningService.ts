@@ -425,9 +425,11 @@ export async function scanInvoicePackage(
     quantity,
   }
 
-  if (packageRecord.status === 'shipped') {
+  if (packageRecord.status === 'shipped' || packageRecord.status === 'osd_hold') {
     const message =
-      'NO SE VA: este paquete ya aparece como enviado.'
+      packageRecord.status === 'osd_hold'
+        ? 'NO SE VA: este paquete está retenido en OS&D.'
+        : 'NO SE VA: este paquete ya aparece como enviado.'
 
     const scan = await insertScan({
       ...baseInput,

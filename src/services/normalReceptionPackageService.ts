@@ -3,6 +3,9 @@ import type { QuickReceptionPackageInput } from './quickReceivingService'
 
 export type NormalReceptionPackageInput = QuickReceptionPackageInput & {
   palletNumber: number
+  conditionStatus?: 'good' | 'damaged' | 'missing_packing'
+  exceptionReason?: 'damage' | 'missing_packing' | null
+  exceptionNotes?: string
 }
 
 export type NormalReceptionWarehousePackage = {
@@ -17,7 +20,10 @@ export type NormalReceptionWarehousePackage = {
   supplier_package_id: string | null
   supplier_package_type: '3S' | '4S' | null
   raw_codes: Record<string, string>
-  status: 'received' | 'assigned' | 'shipped'
+  status: 'received' | 'assigned' | 'osd_hold' | 'shipped'
+  condition_status?: 'good' | 'damaged' | 'missing_packing'
+  exception_reason?: 'damage' | 'missing_packing' | null
+  exception_notes?: string | null
   created_at: string
   pallet_number?: number
 }
@@ -67,6 +73,10 @@ export async function createNormalReceptionPackages(
       supplier_package_id: item.supplierPackageId || null,
       supplier_package_type: item.supplierPackageType,
       raw_codes: item.rawCodes,
+      status: item.conditionStatus && item.conditionStatus !== 'good' ? 'osd_hold' : 'received',
+      condition_status: item.conditionStatus || 'good',
+      exception_reason: item.exceptionReason || null,
+      exception_notes: item.exceptionNotes?.trim() || null,
     }
   })
 
@@ -79,7 +89,22 @@ export async function createNormalReceptionPackages(
     throw new Error(`La recepción se guardó, pero no se pudieron generar sus QR: ${error.message}`)
   }
 
-  return (data ?? []) as NormalReceptionWarehousePackage[]
+  const saved = (data ?? []) as NormalReceptionWarehousePackage[]
+  const osdRows = saved
+    .filter((item) => item.condition_status && item.condition_status !== 'good')
+    .map((item) => ({
+      warehouse_package_id: item.id,
+      reception_id: receptionId,
+      reason: item.exception_reason || 'damage',
+      notes: item.exception_notes,
+    }))
+
+  if (osdRows.length) {
+    const { error: osdError } = await supabase.from('inventory_osd_cases').insert(osdRows)
+    if (osdError) throw new Error(`Los paquetes se guardaron, pero OS&D falló: ${osdError.message}`)
+  }
+
+  return saved
 }
 
 export async function listNormalReceptionPackages(
