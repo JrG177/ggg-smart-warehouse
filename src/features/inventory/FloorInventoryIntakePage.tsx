@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { CheckCircle2, ImagePlus, Minus, PackagePlus, RotateCcw, ScanBarcode, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -39,12 +39,13 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   const [lines, setLines] = useState<IntakeLine[]>([])
   const [scanHistory, setScanHistory] = useState<string[]>([])
   const [scannerOpen, setScannerOpen] = useState(false)
-  const [scannerMode, setScannerMode] = useState<'zebra' | 'camera'>('zebra')
   const [scannerInput, setScannerInput] = useState('')
   const [scannerMessage, setScannerMessage] = useState('')
   const [scanTarget, setScanTarget] = useState<'P' | 'Q'>('P')
   const [pendingPartNumber, setPendingPartNumber] = useState('')
   const scannerInputRef = useRef<HTMLInputElement | null>(null)
+  const externalScanRef = useRef({ value: '', time: 0 })
+  const scannerIdleTimerRef = useRef<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveStage, setSaveStage] = useState('')
   const [error, setError] = useState('')
@@ -80,6 +81,10 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   }
 
   function submitHardwareScan(rawValue: string) {
+    if (scannerIdleTimerRef.current !== null) {
+      window.clearTimeout(scannerIdleTimerRef.current)
+      scannerIdleTimerRef.current = null
+    }
     const cleaned = rawValue
       .split('')
       .filter((character) => {
@@ -148,6 +153,64 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
     navigator.vibrate?.([80, 40, 80])
     window.setTimeout(() => scannerInputRef.current?.focus(), 0)
   }
+
+  function scheduleHardwareScan(rawValue: string) {
+    if (scannerIdleTimerRef.current !== null) window.clearTimeout(scannerIdleTimerRef.current)
+    if (rawValue.trim().length < 2) return
+
+    // DataWedge profiles do not always include an Enter suffix. A short idle
+    // window lets the TC57 finish typing the barcode and then processes it.
+    scannerIdleTimerRef.current = window.setTimeout(() => {
+      submitHardwareScan(rawValue)
+    }, 180)
+  }
+
+  useEffect(() => {
+    if (!carrier) return
+
+    function flushExternalScan() {
+      const value = externalScanRef.current.value
+      externalScanRef.current = { value: '', time: 0 }
+      if (value) submitHardwareScan(value)
+    }
+
+    function handleExternalScanner(event: KeyboardEvent) {
+      const element = event.target as HTMLElement | null
+      if (element === scannerInputRef.current) return
+
+      const isEditing = element?.tagName === 'INPUT'
+        || element?.tagName === 'TEXTAREA'
+        || element?.tagName === 'SELECT'
+      if (isEditing) return
+
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        if (externalScanRef.current.value) {
+          event.preventDefault()
+          flushExternalScan()
+        }
+        return
+      }
+
+      if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return
+      const now = Date.now()
+      const previous = externalScanRef.current
+      externalScanRef.current = {
+        value: now - previous.time > 120 ? event.key : previous.value + event.key,
+        time: now,
+      }
+
+      if (scannerIdleTimerRef.current !== null) window.clearTimeout(scannerIdleTimerRef.current)
+      scannerIdleTimerRef.current = window.setTimeout(flushExternalScan, 180)
+    }
+
+    window.addEventListener('keydown', handleExternalScanner)
+    return () => {
+      window.removeEventListener('keydown', handleExternalScanner)
+      if (scannerIdleTimerRef.current !== null) window.clearTimeout(scannerIdleTimerRef.current)
+      scannerIdleTimerRef.current = null
+      externalScanRef.current = { value: '', time: 0 }
+    }
+  }, [carrier, pendingPartNumber, scanTarget])
 
   function updateLine(partNumber: string, field: 'bultos' | 'quantity', value: number) {
     setLines((current) => current.map((line) => line.partNumber === partNumber
@@ -369,33 +432,40 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-[220px_1fr]">
-          <select value={scannerMode} onChange={(event) => setScannerMode(event.target.value as 'zebra' | 'camera')} className="min-h-14 rounded-xl border border-slate-700 bg-slate-950 px-3 font-semibold text-white">
-            <option value="zebra">Zebra / lector físico</option>
-            <option value="camera">Cámara del celular</option>
-          </select>
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
           <button
             type="button"
             onClick={() => {
-              if (scannerMode === 'camera') setScannerOpen(true)
-              else scannerInputRef.current?.focus()
+              scannerInputRef.current?.focus()
             }}
             disabled={!carrier}
             className="inline-flex min-h-14 w-full items-center justify-center gap-3 rounded-xl bg-emerald-500 px-5 text-base font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <ScanBarcode size={23} /> Agregar números de parte
+            <ScanBarcode size={23} /> Activar escáner TC57
+          </button>
+          <button
+            type="button"
+            onClick={() => setScannerOpen(true)}
+            disabled={!carrier}
+            className="min-h-14 rounded-xl border border-slate-700 px-4 font-semibold text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Usar cámara (respaldo)
           </button>
         </div>
 
-        {scannerMode === 'zebra' && (
-          <section className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
+        <section className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 p-4">
             <label className="text-sm font-bold text-white">
               {scanTarget === 'P' ? 'Escanear número de parte (P)' : `Escanear cantidad (Q) para ${pendingPartNumber}`}
               <input
                 ref={scannerInputRef}
                 value={scannerInput}
                 autoComplete="off"
-                onChange={(event) => setScannerInput(event.target.value)}
+                autoFocus
+                onChange={(event) => {
+                  const value = event.target.value
+                  setScannerInput(value)
+                  scheduleHardwareScan(value)
+                }}
                 onKeyDown={(event) => {
                   if (event.key !== 'Enter' && event.key !== 'Tab') return
                   event.preventDefault()
@@ -413,8 +483,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
                 Procesar lectura
               </button>
             </div>
-          </section>
-        )}
+        </section>
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-xl border border-slate-800 bg-slate-950 p-4"><p className="text-xs uppercase text-slate-500">Lecturas</p><p className="mt-1 text-2xl font-bold text-white">{scanHistory.length}</p></div>
