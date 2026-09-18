@@ -28,6 +28,7 @@ type EditInvoiceModalProps = {
   }
   invoiceNumber: string
   carrier: string
+  trailer: string
   packageCount: string
   availableReceptions: AvailableInvoiceReception[]
   selectedReceptionIds: string[]
@@ -41,6 +42,7 @@ type EditInvoiceModalProps = {
   deletingPhotoId: string | null
   onInvoiceNumberChange: (value: string) => void
   onCarrierChange: (value: string) => void
+  onTrailerChange: (value: string) => void
   onPackageCountChange: (value: string) => void
   onReceptionSearchChange: (value: string) => void
   onToggleReception: (receptionId: string) => void
@@ -65,6 +67,7 @@ export function EditInvoiceModal({
   invoice,
   invoiceNumber,
   carrier,
+  trailer,
   packageCount,
   availableReceptions,
   selectedReceptionIds,
@@ -78,6 +81,7 @@ export function EditInvoiceModal({
   deletingPhotoId,
   onInvoiceNumberChange,
   onCarrierChange,
+  onTrailerChange,
   onPackageCountChange,
   onReceptionSearchChange,
   onToggleReception,
@@ -144,7 +148,7 @@ export function EditInvoiceModal({
             <div className="space-y-6">
               <section className="rounded-2xl border border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-950 p-5">
                 <h3 className="text-lg font-bold">Información general</h3>
-                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   <div>
                     <label htmlFor="edit-full-invoice-number" className="mb-2 block text-sm font-semibold text-slate-700 dark:text-slate-300">Número de factura</label>
                     <input id="edit-full-invoice-number" value={invoiceNumber} onChange={(event) => onInvoiceNumberChange(event.target.value)} className="w-full rounded-xl border border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900 px-4 py-3 outline-none focus:border-emerald-500" />
@@ -154,6 +158,10 @@ export function EditInvoiceModal({
                     <select id="edit-full-carrier" value={carrier} disabled={loadingReceptions} onChange={(event) => onCarrierChange(event.target.value)} className="w-full rounded-xl border border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900 px-4 py-3 outline-none focus:border-emerald-500 disabled:opacity-50">
                       {carriers.map((item) => <option key={item} value={item}>{item}</option>)}
                     </select>
+                  </div>
+                  <div>
+                    <label htmlFor="edit-full-trailer" className="mb-2 block text-sm font-semibold text-slate-700 dark:text-slate-300">Número de trailer</label>
+                    <input id="edit-full-trailer" value={trailer} onChange={(event) => onTrailerChange(event.target.value.toUpperCase())} placeholder="Ej. M53" className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 uppercase outline-none focus:border-emerald-500 dark:border-slate-700 dark:bg-slate-900" />
                   </div>
                   <div>
                     <label htmlFor="edit-full-package-count" className="mb-2 block text-sm font-semibold text-slate-700 dark:text-slate-300">Número de bultos</label>
@@ -175,7 +183,7 @@ export function EditInvoiceModal({
                 </div>
                 <div className="relative mt-4">
                   <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                  <input value={receptionSearch} onChange={(event) => onReceptionSearchChange(event.target.value)} placeholder="Buscar por recepción, trailer, carrier o número de parte..." className="w-full rounded-xl border border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900 py-3 pl-10 pr-4 outline-none focus:border-emerald-500" />
+                  <input value={receptionSearch} onChange={(event) => onReceptionSearchChange(event.target.value)} placeholder="Buscar por recepción, carrier o número de parte..." className="w-full rounded-xl border border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-900 py-3 pl-10 pr-4 outline-none focus:border-emerald-500" />
                 </div>
 
                 {loadingReceptions ? (
@@ -194,7 +202,7 @@ export function EditInvoiceModal({
                                 <p className="font-bold">{reception.reception_number || 'Sin folio'}</p>
                                 <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-400">{reception.already_in_current_invoice ? 'Actual' : 'Disponible'}</span>
                               </div>
-                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{reception.other_carrier || reception.carrier}{' · '}{reception.trailer || 'Sin trailer'}</p>
+                              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{reception.other_carrier || reception.carrier}</p>
                             </div>
                             <input type="checkbox" checked={selected} readOnly className="h-5 w-5 accent-emerald-500" />
                           </div>

@@ -159,6 +159,7 @@ type Invoice = {
   id: string
   invoice_number: string
   carrier: string
+  trailer: string
   package_count: number
   invoice_photo_path: string | null
   status: 'open' | 'completed'
@@ -254,8 +255,9 @@ function exportInvoicePdf(invoice: Invoice) {
   doc.setFontSize(11)
   doc.text(`Factura: ${invoice.invoice_number}`, 14, 29)
   doc.text(`Carrier: ${invoice.carrier}`, 14, 37)
-  doc.text(`Partidas: ${imported.invoice_import_lines.length}`, 14, 45)
-  let y = 58
+  doc.text(`Trailer: ${invoice.trailer || 'Sin asignar'}`, 14, 45)
+  doc.text(`Partidas: ${imported.invoice_import_lines.length}`, 14, 53)
+  let y = 66
   doc.setFont('helvetica', 'bold')
   doc.text('Linea', 14, y); doc.text('Numero de parte', 34, y); doc.text('Cantidad', 135, y); doc.text('Total', 170, y)
   doc.setFont('helvetica', 'normal')
@@ -620,6 +622,11 @@ export function BillingPage() {
   ] = useState('')
 
   const [
+    editTrailer,
+    setEditTrailer,
+  ] = useState('')
+
+  const [
     editPackageCount,
     setEditPackageCount,
   ] = useState('')
@@ -714,6 +721,11 @@ const [
 const [
   newInvoiceNumber,
   setNewInvoiceNumber,
+] = useState('')
+
+const [
+  newInvoiceTrailer,
+  setNewInvoiceTrailer,
 ] = useState('')
 
 const [
@@ -844,6 +856,7 @@ const loadInvoices =
           id,
           invoice_number,
           carrier,
+          trailer,
           package_count,
           invoice_photo_path,
           status,
@@ -1091,6 +1104,7 @@ const editInvoiceSummary =
             return [
               invoice.invoice_number,
               invoice.carrier,
+              invoice.trailer,
               imported?.container_number || '',
               imported?.customs_entry || '',
               ...(imported?.invoice_import_lines || []).map(
@@ -1137,6 +1151,7 @@ const editInvoiceSummary =
     setNewInvoiceStep(1)
     setNewInvoiceCarrier('XPO')
     setNewInvoiceNumber('')
+    setNewInvoiceTrailer('')
     setNewInvoicePackageCount('')
     setNewInvoicePhotos([])
     setNewInvoiceImportData(null)
@@ -1157,6 +1172,7 @@ const openNewInvoice =
     setNewInvoiceStep(1)
     setNewInvoiceCarrier('XPO')
     setNewInvoiceNumber('')
+    setNewInvoiceTrailer('')
     setNewInvoicePackageCount('')
     setNewInvoicePhotos([])
     setNewInvoiceImportData(null)
@@ -1347,6 +1363,9 @@ const createNewInvoice =
             carrier:
               newInvoiceCarrier,
 
+            trailer:
+              newInvoiceTrailer,
+
             packageCount:
               Number(
                 newInvoicePackageCount,
@@ -1424,6 +1443,10 @@ const openEditInvoice =
 
       setEditCarrier(
         invoice.carrier,
+      )
+
+      setEditTrailer(
+        invoice.trailer || '',
       )
 
       setEditPackageCount(
@@ -1523,6 +1546,10 @@ const closeEditInvoice =
     )
 
     setEditCarrier(
+      '',
+    )
+
+    setEditTrailer(
       '',
     )
 
@@ -1824,6 +1851,9 @@ const saveInvoiceChanges =
 
             carrier:
               editCarrier,
+
+            trailer:
+              editTrailer,
 
             packageCount,
 
@@ -2858,7 +2888,7 @@ const saveInvoiceChanges =
                         </p>
 
                         <p className="mt-1 text-sm text-slate-400">
-                          {invoice.carrier} · {invoice.package_count} bultos · {invoice.invoice_receptions.length} recepciones
+                          {invoice.carrier} · Trailer {invoice.trailer || 'sin asignar'} · {invoice.package_count} bultos · {invoice.invoice_receptions.length} recepciones
                         </p>
 
                         {imported && (
@@ -3689,6 +3719,23 @@ const saveInvoiceChanges =
 
             <div>
               <label
+                htmlFor="new-invoice-trailer"
+                className="mb-2 block text-sm font-semibold text-slate-300"
+              >
+                Número de trailer
+              </label>
+
+              <input
+                id="new-invoice-trailer"
+                value={newInvoiceTrailer}
+                onChange={(event) => setNewInvoiceTrailer(event.target.value.toUpperCase())}
+                placeholder="Ej. M53"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 uppercase outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label
                 htmlFor="new-invoice-number"
                 className="mb-2 block text-sm font-semibold text-slate-300"
               >
@@ -4121,6 +4168,7 @@ const saveInvoiceChanges =
           }}
           invoiceNumber={editInvoiceNumber}
           carrier={editCarrier}
+          trailer={editTrailer}
           packageCount={editPackageCount}
           availableReceptions={filteredEditReceptions}
           selectedReceptionIds={editSelectedReceptionIds}
@@ -4137,6 +4185,7 @@ const saveInvoiceChanges =
             setEditCarrier(carrier)
             void reloadEditReceptions(carrier)
           }}
+          onTrailerChange={setEditTrailer}
           onPackageCountChange={setEditPackageCount}
           onReceptionSearchChange={setEditReceptionSearch}
           onToggleReception={toggleEditReception}

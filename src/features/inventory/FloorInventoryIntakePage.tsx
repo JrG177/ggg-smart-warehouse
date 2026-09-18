@@ -35,7 +35,6 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
   const [receptionType, setReceptionType] = useState<'normal' | ''>('')
   const [carrier, setCarrier] = useState('')
   const [otherCarrier, setOtherCarrier] = useState('')
-  const [trailer, setTrailer] = useState('')
   const [lines, setLines] = useState<IntakeLine[]>([])
   const [scanHistory, setScanHistory] = useState<string[]>([])
   const [scannerOpen, setScannerOpen] = useState(false)
@@ -316,7 +315,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       const savedReception = await createReception({
         carrier,
         otherCarrier,
-        trailer,
+        trailer: '',
         palletCount: '1',
         seal: '',
         receptionDate: localDate(),
@@ -367,7 +366,6 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       setSaveStage('')
       setLines([])
       setScanHistory([])
-      setTrailer('')
       palletPhotos.forEach((photo) => URL.revokeObjectURL(photo.preview))
       packingListPhotos.forEach((photo) => URL.revokeObjectURL(photo.preview))
       setPalletPhotos([])
@@ -410,20 +408,16 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
         {error && <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-400">{error}</div>}
         {success && <div className="flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-semibold text-emerald-400"><CheckCircle2 size={18} />{success}</div>}
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           <label className="text-sm font-semibold text-slate-300">Carrier *
             <select value={carrier} onChange={(event) => setCarrier(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white">
               <option value="">Seleccionar carrier</option>
               {carriers.map((name) => <option key={name} value={name}>{name === 'Other' ? 'Otro' : name}</option>)}
             </select>
           </label>
-          {carrier === 'Other' ? (
+          {carrier === 'Other' && (
             <label className="text-sm font-semibold text-slate-300">Nombre del carrier *
               <input value={otherCarrier} onChange={(event) => setOtherCarrier(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" />
-            </label>
-          ) : (
-            <label className="text-sm font-semibold text-slate-300">Trailer / referencia (opcional)
-              <input value={trailer} onChange={(event) => setTrailer(event.target.value)} className="mt-2 min-h-12 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-white" />
             </label>
           )}
           <div className="rounded-xl border border-slate-800 bg-slate-950 px-4 py-3">

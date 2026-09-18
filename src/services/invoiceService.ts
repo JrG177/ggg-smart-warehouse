@@ -28,6 +28,7 @@ export type InvoicePhoto = {
 export type CreateInvoiceInput = {
   invoiceNumber: string
   carrier: string
+  trailer: string
   packageCount: number
   receptionIds: string[]
   photos: File[]
@@ -39,6 +40,7 @@ export type UpdateInvoiceInput = {
   invoiceId: string
   invoiceNumber: string
   carrier: string
+  trailer: string
   packageCount: number
   receptionIds: string[]
 }
@@ -68,6 +70,10 @@ function normalizeCarrier(
   return value
     .trim()
     .toUpperCase()
+}
+
+function normalizeTrailer(value: string) {
+  return value.trim().toUpperCase()
 }
 
 function validateInvoiceInformation({
@@ -391,6 +397,8 @@ export async function createInvoiceWithReceptions(
       input.carrier,
     )
 
+  const trailer = normalizeTrailer(input.trailer)
+
   validateInvoiceInformation({
     invoiceNumber,
     carrier,
@@ -524,12 +532,18 @@ export async function createInvoiceWithReceptions(
       )
     }
 
+    const savedInvoiceId = String(data || invoiceId)
+    const { error: trailerError } = await (supabase.rpc as any)(
+      'set_invoice_trailer',
+      { p_invoice_id: savedInvoiceId, p_trailer: trailer },
+    )
+
+    if (trailerError) {
+      throw new Error(`La factura se creó, pero no se pudo guardar el trailer: ${trailerError.message}`)
+    }
+
     return {
-      invoiceId:
-        String(
-          data ||
-            invoiceId,
-        ),
+      invoiceId: savedInvoiceId,
 
       invoiceNumber,
     }
@@ -562,6 +576,8 @@ export async function updateInvoiceWithReceptions(
     normalizeCarrier(
       input.carrier,
     )
+
+  const trailer = normalizeTrailer(input.trailer)
 
   validateInvoiceInformation({
     invoiceNumber,
@@ -601,6 +617,15 @@ export async function updateInvoiceWithReceptions(
     throw new Error(
       error.message,
     )
+  }
+
+  const { error: trailerError } = await (supabase.rpc as any)(
+    'set_invoice_trailer',
+    { p_invoice_id: input.invoiceId, p_trailer: trailer },
+  )
+
+  if (trailerError) {
+    throw new Error(`No se pudo guardar el trailer de la factura: ${trailerError.message}`)
   }
 
   return {
