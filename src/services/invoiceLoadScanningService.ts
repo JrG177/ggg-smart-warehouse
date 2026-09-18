@@ -55,6 +55,7 @@ function cleanScanCode(value: string) {
     .join('')
     .trim()
     .replace(/^\*|\*$/g, '')
+    .replace(/^\][A-Z][0-9]/i, '')
     .toUpperCase()
 }
 

@@ -93,6 +93,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       .join('')
       .trim()
       .replace(/^\*|\*$/g, '')
+      .replace(/^\][A-Z][0-9]/i, '')
       .toUpperCase()
 
     if (!cleaned) return
@@ -194,7 +195,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       const now = Date.now()
       const previous = externalScanRef.current
       externalScanRef.current = {
-        value: now - previous.time > 120 ? event.key : previous.value + event.key,
+        value: now - previous.time > 700 ? event.key : previous.value + event.key,
         time: now,
       }
 
@@ -202,9 +203,9 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       scannerIdleTimerRef.current = window.setTimeout(flushExternalScan, 450)
     }
 
-    window.addEventListener('keydown', handleExternalScanner)
+    window.addEventListener('keydown', handleExternalScanner, true)
     return () => {
-      window.removeEventListener('keydown', handleExternalScanner)
+      window.removeEventListener('keydown', handleExternalScanner, true)
       if (scannerIdleTimerRef.current !== null) window.clearTimeout(scannerIdleTimerRef.current)
       scannerIdleTimerRef.current = null
       externalScanRef.current = { value: '', time: 0 }
@@ -455,6 +456,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
                 value={scannerInput}
                 autoComplete="off"
                 autoFocus
+                inputMode="none"
                 onChange={(event) => {
                   const value = event.target.value
                   setScannerInput(value)
@@ -465,7 +467,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
                   event.preventDefault()
                   submitHardwareScan(event.currentTarget.value)
                 }}
-                placeholder={scanTarget === 'P' ? 'Escanea P y presiona Enter' : 'Escanea Q y presiona Enter'}
+                placeholder={scanTarget === 'P' ? 'Esperando código P…' : 'Esperando código Q…'}
                 className="mt-2 min-h-14 w-full rounded-xl border border-emerald-400 bg-slate-950 px-4 text-lg font-bold uppercase text-white outline-none focus:ring-4 focus:ring-emerald-400/20"
               />
             </label>

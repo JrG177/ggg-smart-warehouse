@@ -109,6 +109,7 @@ function cleanRawCode(value: string) {
     .join('')
     .trim()
     .replace(/^\*|\*$/g, '')
+    .replace(/^\][A-Z][0-9]/i, '')
     .toUpperCase()
 }
 
@@ -514,7 +515,7 @@ export function PackageLabelScanner({
       if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return
       const now = Date.now()
       externalScanRef.current = {
-        value: now - externalScanRef.current.time > 120
+        value: now - externalScanRef.current.time > 700
           ? event.key
           : externalScanRef.current.value + event.key,
         time: now,
@@ -529,9 +530,9 @@ export function PackageLabelScanner({
       }, 450)
     }
 
-    window.addEventListener('keydown', handleExternalScanner)
+    window.addEventListener('keydown', handleExternalScanner, true)
     return () => {
-      window.removeEventListener('keydown', handleExternalScanner)
+      window.removeEventListener('keydown', handleExternalScanner, true)
       if (externalIdleTimerRef.current !== null) window.clearTimeout(externalIdleTimerRef.current)
       externalIdleTimerRef.current = null
     }

@@ -11,6 +11,7 @@ import {
 } from 'zxing-wasm/reader'
 import {
   AlertTriangle,
+  Camera,
   CheckCircle2,
   LoaderCircle,
   ScanBarcode,
@@ -38,6 +39,8 @@ type InvoiceLoadScannerProps = {
   expectedLines: ExpectedInvoiceLine[]
   onClose: () => void
 }
+
+type ScanSource = 'hardware' | 'camera' | 'manual'
 
 const SCAN_INTERVAL_MS = 240
 const SUPPORTED_FORMATS = [
@@ -70,6 +73,7 @@ function cleanCode(value: string) {
     .join('')
     .trim()
     .replace(/^\*|\*$/g, '')
+    .replace(/^\][A-Z][0-9]/i, '')
     .toUpperCase()
 }
 
@@ -160,7 +164,20 @@ export function InvoiceLoadScanner({
   const lastProcessedRef = useRef({
     value: '',
     time: 0,
+    source: '',
   })
+  const pendingHardwareScansRef = useRef<
+    Array<{ value: string; source: ScanSource }>
+  >([])
+  const processCodeRef = useRef<
+    (rawCode: string, source?: ScanSource) => Promise<void>
+  >(async () => undefined)
+  const hardwareInputRef =
+    useRef<HTMLInputElement | null>(null)
+  const hardwareIdleTimerRef =
+    useRef<number | null>(null)
+  const externalIdleTimerRef =
+    useRef<number | null>(null)
   const externalScanRef = useRef({
     value: '',
     time: 0,
@@ -176,11 +193,15 @@ export function InvoiceLoadScanner({
     useState(false)
   const [deletingScanId, setDeletingScanId] =
     useState<string | null>(null)
+  const [cameraEnabled, setCameraEnabled] =
+    useState(false)
   const [cameraStatus, setCameraStatus] =
-    useState<'starting' | 'ready' | 'error'>(
-      'starting',
+    useState<'idle' | 'starting' | 'ready' | 'error'>(
+      'idle',
     )
   const [error, setError] = useState('')
+  const [hardwareCode, setHardwareCode] =
+    useState('')
   const [manualCode, setManualCode] =
     useState('')
 
@@ -204,18 +225,40 @@ export function InvoiceLoadScanner({
   }, [loadScans])
 
   const processCode = useCallback(
-    async (rawCode: string) => {
+    async (
+      rawCode: string,
+      source: ScanSource = 'manual',
+    ) => {
       const cleaned = cleanCode(rawCode)
 
-      if (!cleaned || busyRef.current) {
+      if (!cleaned) {
+        return
+      }
+
+      if (busyRef.current) {
+        if (source === 'hardware') {
+          pendingHardwareScansRef.current.push({
+            value: cleaned,
+            source,
+          })
+        }
         return
       }
 
       const now = Date.now()
 
+      const duplicateWindow =
+        source === 'camera'
+          ? 2200
+          : source === 'manual'
+            ? 250
+            : 0
+
       if (
+        duplicateWindow > 0 &&
         cleaned === lastProcessedRef.current.value &&
-        now - lastProcessedRef.current.time < 2200
+        source === lastProcessedRef.current.source &&
+        now - lastProcessedRef.current.time < duplicateWindow
       ) {
         return
       }
@@ -224,6 +267,7 @@ export function InvoiceLoadScanner({
       lastProcessedRef.current = {
         value: cleaned,
         time: now,
+        source,
       }
       setProcessing(true)
       setError('')
@@ -247,12 +291,41 @@ export function InvoiceLoadScanner({
       } finally {
         setProcessing(false)
         busyRef.current = false
+        if (!cameraEnabled) {
+          window.setTimeout(
+            () => hardwareInputRef.current?.focus(),
+            0,
+          )
+        }
+
+        const nextScan = pendingHardwareScansRef.current.shift()
+        if (nextScan) {
+          window.setTimeout(
+            () => void processCodeRef.current(
+              nextScan.value,
+              nextScan.source,
+            ),
+            0,
+          )
+        }
       }
     },
-    [invoiceId, loadScans],
+    [cameraEnabled, invoiceId, loadScans],
   )
 
   useEffect(() => {
+    processCodeRef.current = processCode
+  }, [processCode])
+
+  useEffect(() => {
+    if (!cameraEnabled) {
+      streamRef.current
+        ?.getTracks()
+        .forEach((track) => track.stop())
+      streamRef.current = null
+      return
+    }
+
     let cancelled = false
     let decoding = false
     let timer = 0
@@ -359,7 +432,7 @@ export function InvoiceLoadScanner({
               matches: 0,
               time: 0,
             }
-            await processCode(value)
+            await processCode(value, 'camera')
           }
         }
       } catch {
@@ -439,20 +512,71 @@ export function InvoiceLoadScanner({
         .forEach((track) => track.stop())
       streamRef.current = null
     }
+  }, [cameraEnabled, processCode])
+
+  const submitHardwareCode = useCallback((rawValue: string) => {
+    if (hardwareIdleTimerRef.current !== null) {
+      window.clearTimeout(hardwareIdleTimerRef.current)
+      hardwareIdleTimerRef.current = null
+    }
+
+    const value = cleanCode(rawValue)
+    setHardwareCode('')
+
+    if (value) {
+      void processCode(value, 'hardware')
+    }
+
+    window.setTimeout(
+      () => hardwareInputRef.current?.focus(),
+      0,
+    )
   }, [processCode])
 
+  const scheduleHardwareCode = useCallback((rawValue: string) => {
+    if (hardwareIdleTimerRef.current !== null) {
+      window.clearTimeout(hardwareIdleTimerRef.current)
+    }
+
+    if (!rawValue.trim()) {
+      return
+    }
+
+    // DataWedge may inject the complete value without an Enter suffix.
+    hardwareIdleTimerRef.current = window.setTimeout(() => {
+      submitHardwareCode(rawValue)
+    }, 450)
+  }, [submitHardwareCode])
+
   useEffect(() => {
+    function flushExternalScan() {
+      if (externalIdleTimerRef.current !== null) {
+        window.clearTimeout(externalIdleTimerRef.current)
+        externalIdleTimerRef.current = null
+      }
+
+      const value = externalScanRef.current.value
+      externalScanRef.current = { value: '', time: 0 }
+
+      if (value) {
+        void processCode(value, 'hardware')
+      }
+    }
+
     function handleExternalScanner(
       event: KeyboardEvent,
     ) {
       const element =
         event.target as HTMLElement | null
+      const isHardwareInput =
+        element === hardwareInputRef.current
       const isEditing =
         element?.tagName === 'INPUT' ||
         element?.tagName === 'TEXTAREA' ||
-        element?.tagName === 'SELECT'
+        element?.tagName === 'SELECT' ||
+        element?.isContentEditable
 
-      if (isEditing) {
+      if (isHardwareInput || isEditing) {
         return
       }
 
@@ -460,16 +584,9 @@ export function InvoiceLoadScanner({
         event.key === 'Enter' ||
         event.key === 'Tab'
       ) {
-        const value =
-          externalScanRef.current.value
-        externalScanRef.current = {
-          value: '',
-          time: 0,
-        }
-
-        if (value) {
+        if (externalScanRef.current.value) {
           event.preventDefault()
-          void processCode(value)
+          flushExternalScan()
         }
 
         return
@@ -488,24 +605,61 @@ export function InvoiceLoadScanner({
 
       externalScanRef.current = {
         value:
-          now - externalScanRef.current.time > 120
+          now - externalScanRef.current.time > 700
             ? event.key
             : externalScanRef.current.value + event.key,
         time: now,
       }
+
+      if (externalIdleTimerRef.current !== null) {
+        window.clearTimeout(externalIdleTimerRef.current)
+      }
+
+      externalIdleTimerRef.current = window.setTimeout(
+        flushExternalScan,
+        450,
+      )
     }
 
     window.addEventListener(
       'keydown',
       handleExternalScanner,
+      true,
     )
 
-    return () =>
+    return () => {
       window.removeEventListener(
         'keydown',
         handleExternalScanner,
+        true,
       )
+      if (externalIdleTimerRef.current !== null) {
+        window.clearTimeout(externalIdleTimerRef.current)
+      }
+      externalIdleTimerRef.current = null
+      externalScanRef.current = { value: '', time: 0 }
+    }
   }, [processCode])
+
+  useEffect(() => {
+    if (cameraEnabled) {
+      return
+    }
+
+    const timer = window.setTimeout(
+      () => hardwareInputRef.current?.focus(),
+      50,
+    )
+
+    return () => window.clearTimeout(timer)
+  }, [cameraEnabled])
+
+  useEffect(() => () => {
+    if (hardwareIdleTimerRef.current !== null) {
+      window.clearTimeout(hardwareIdleTimerRef.current)
+    }
+    pendingHardwareScansRef.current = []
+  }, [])
 
   const progressRows = useMemo(() => {
     const expected =
@@ -609,6 +763,13 @@ export function InvoiceLoadScanner({
     }
   }
 
+  function toggleCamera() {
+    const nextEnabled = !cameraEnabled
+    setError('')
+    setCameraStatus(nextEnabled ? 'starting' : 'idle')
+    setCameraEnabled(nextEnabled)
+  }
+
   const latestTone = latestOutcome
     ? resultTone(latestOutcome.scan.result)
     : null
@@ -645,56 +806,111 @@ export function InvoiceLoadScanner({
 
       <main className="mx-auto grid max-w-6xl gap-5 p-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
         <section className="space-y-4">
-          <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
-            <div className="relative aspect-[4/3] bg-black sm:aspect-video">
-              <video
-                ref={videoRef}
-                muted
-                playsInline
-                className="h-full w-full object-cover"
-              />
-              <canvas
-                ref={canvasRef}
-                className="hidden"
-                aria-hidden="true"
-              />
-              <div className="pointer-events-none absolute inset-x-[7%] top-1/2 h-[64%] -translate-y-1/2 rounded-2xl border-4 border-emerald-400 shadow-[0_0_0_999px_rgba(2,6,23,0.48)]" />
-
-              {cameraStatus === 'starting' && (
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80">
-                  <LoaderCircle
-                    className="mr-2 animate-spin"
-                    size={24}
-                  />
-                  Abriendo cámara…
-                </div>
-              )}
+          <div className="rounded-2xl border-2 border-emerald-500/60 bg-emerald-500/10 p-4 shadow-lg shadow-emerald-950/30">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="flex items-center gap-2 text-lg font-black text-emerald-300">
+                  <ScanBarcode size={24} />
+                  TC57 listo
+                </p>
+                <p className="mt-1 text-sm text-slate-300">
+                  Presiona un gatillo lateral y escanea el código P. No necesitas abrir la cámara ni presionar Enter.
+                </p>
+              </div>
 
               {processing && (
-                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/75 text-lg font-bold">
-                  <LoaderCircle
-                    className="mr-2 animate-spin"
-                    size={26}
-                  />
-                  Verificando paquete…
-                </div>
+                <LoaderCircle
+                  className="shrink-0 animate-spin text-emerald-300"
+                  size={28}
+                />
               )}
             </div>
 
-            <div className="space-y-3 p-4">
+            <input
+              ref={hardwareInputRef}
+              value={hardwareCode}
+              onChange={(event) => {
+                const value = event.target.value
+                setHardwareCode(value)
+                scheduleHardwareCode(value)
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== 'Tab') {
+                  return
+                }
+
+                event.preventDefault()
+                submitHardwareCode(event.currentTarget.value)
+              }}
+              onFocus={(event) => event.currentTarget.select()}
+              autoFocus
+              autoComplete="off"
+              autoCapitalize="characters"
+              inputMode="none"
+              spellCheck={false}
+              aria-label="Captura del escáner TC57"
+              placeholder="Esperando lectura del TC57…"
+              className="mt-4 min-h-14 w-full rounded-xl border border-emerald-500/50 bg-slate-950 px-4 text-lg font-bold uppercase tracking-wide text-white outline-none focus:border-emerald-300"
+            />
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-slate-400">
+                Si el Zebra pita, la lectura aparecerá aquí y se verificará automáticamente.
+              </p>
+              <button
+                type="button"
+                onClick={toggleCamera}
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-700 px-3 text-sm font-semibold text-slate-300"
+              >
+                <Camera size={17} />
+                {cameraEnabled ? 'Cerrar cámara' : 'Usar cámara de respaldo'}
+              </button>
+            </div>
+          </div>
+
+          {cameraEnabled && (
+            <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+              <div className="relative aspect-[4/3] bg-black sm:aspect-video">
+                <video
+                  ref={videoRef}
+                  muted
+                  playsInline
+                  className="h-full w-full object-cover"
+                />
+                <canvas
+                  ref={canvasRef}
+                  className="hidden"
+                  aria-hidden="true"
+                />
+                <div className="pointer-events-none absolute inset-x-[7%] top-1/2 h-[64%] -translate-y-1/2 rounded-2xl border-4 border-emerald-400 shadow-[0_0_0_999px_rgba(2,6,23,0.48)]" />
+
+                {cameraStatus === 'starting' && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80">
+                    <LoaderCircle
+                      className="mr-2 animate-spin"
+                      size={24}
+                    />
+                    Abriendo cámara…
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-3 rounded-2xl border border-slate-800 bg-slate-900 p-4">
               <p className="flex items-start gap-2 text-sm text-slate-300">
                 <ScanBarcode
                   className="mt-0.5 shrink-0 text-emerald-400"
                   size={19}
                 />
-                Escanea el código P del número de parte. También puedes usar el QR de GGG o el código único 3S/4S cuando estén disponibles.
+                Escanea el código P del número de parte. La cámara y la captura manual quedan únicamente como respaldo.
               </p>
 
               <form
                 className="flex gap-2"
                 onSubmit={(event) => {
                   event.preventDefault()
-                  void processCode(manualCode)
+                  void processCode(manualCode, 'manual')
                   setManualCode('')
                 }}
               >
@@ -723,7 +939,6 @@ export function InvoiceLoadScanner({
                   {error}
                 </p>
               )}
-            </div>
           </div>
 
           {latestOutcome && latestTone && LatestIcon && (
