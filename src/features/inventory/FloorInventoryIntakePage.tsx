@@ -162,7 +162,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
     // window lets the TC57 finish typing the barcode and then processes it.
     scannerIdleTimerRef.current = window.setTimeout(() => {
       submitHardwareScan(rawValue)
-    }, 180)
+    }, 450)
   }
 
   useEffect(() => {
@@ -200,7 +200,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       }
 
       if (scannerIdleTimerRef.current !== null) window.clearTimeout(scannerIdleTimerRef.current)
-      scannerIdleTimerRef.current = window.setTimeout(flushExternalScan, 180)
+      scannerIdleTimerRef.current = window.setTimeout(flushExternalScan, 450)
     }
 
     window.addEventListener('keydown', handleExternalScanner)

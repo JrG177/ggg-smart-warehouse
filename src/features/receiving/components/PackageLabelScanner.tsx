@@ -224,6 +224,8 @@ export function PackageLabelScanner({
   const lastScanRef = useRef({ value: '', time: 0 })
   const candidateRef = useRef({ value: '', matches: 0, time: 0 })
   const externalScanRef = useRef({ value: '', time: 0 })
+  const hardwareIdleTimerRef = useRef<number | null>(null)
+  const externalIdleTimerRef = useRef<number | null>(null)
   const [draft, setDraft] = useState<PackageDraft>(EMPTY_DRAFT)
   const [cameraStatus, setCameraStatus] = useState<'starting' | 'ready' | 'error'>('starting')
   const [photoBusy, setPhotoBusy] = useState(false)
@@ -343,6 +345,28 @@ export function PackageLabelScanner({
       handleRawScan(cleaned)
     }
   }, [handleRawScan])
+
+  const processHardwareValue = useCallback((rawValue: string) => {
+    if (hardwareIdleTimerRef.current !== null) {
+      window.clearTimeout(hardwareIdleTimerRef.current)
+      hardwareIdleTimerRef.current = null
+    }
+
+    setHardwareInput('')
+    if (rawValue.trim()) confirmRawScan(rawValue, true)
+    window.setTimeout(() => hardwareInputRef.current?.focus(), 0)
+  }, [confirmRawScan])
+
+  const scheduleHardwareValue = useCallback((rawValue: string) => {
+    if (hardwareIdleTimerRef.current !== null) window.clearTimeout(hardwareIdleTimerRef.current)
+    if (cleanRawCode(rawValue).length < 2) return
+
+    // DataWedge can be configured without an Enter suffix. Wait until its
+    // keystrokes stop, then accept the complete barcode and advance the field.
+    hardwareIdleTimerRef.current = window.setTimeout(() => {
+      processHardwareValue(rawValue)
+    }, 450)
+  }, [processHardwareValue])
 
   useEffect(() => {
     let cancelled = false
@@ -476,6 +500,10 @@ export function PackageLabelScanner({
       if (event.key === 'Enter' || event.key === 'Tab') {
         const value = externalScanRef.current.value
         externalScanRef.current = { value: '', time: 0 }
+        if (externalIdleTimerRef.current !== null) {
+          window.clearTimeout(externalIdleTimerRef.current)
+          externalIdleTimerRef.current = null
+        }
         if (value) {
           event.preventDefault()
           confirmRawScan(value, true)
@@ -491,11 +519,27 @@ export function PackageLabelScanner({
           : externalScanRef.current.value + event.key,
         time: now,
       }
+
+      if (externalIdleTimerRef.current !== null) window.clearTimeout(externalIdleTimerRef.current)
+      externalIdleTimerRef.current = window.setTimeout(() => {
+        const value = externalScanRef.current.value
+        externalScanRef.current = { value: '', time: 0 }
+        externalIdleTimerRef.current = null
+        if (value) confirmRawScan(value, true)
+      }, 450)
     }
 
     window.addEventListener('keydown', handleExternalScanner)
-    return () => window.removeEventListener('keydown', handleExternalScanner)
+    return () => {
+      window.removeEventListener('keydown', handleExternalScanner)
+      if (externalIdleTimerRef.current !== null) window.clearTimeout(externalIdleTimerRef.current)
+      externalIdleTimerRef.current = null
+    }
   }, [confirmRawScan])
+
+  useEffect(() => () => {
+    if (hardwareIdleTimerRef.current !== null) window.clearTimeout(hardwareIdleTimerRef.current)
+  }, [])
 
   function setField<Key extends keyof PackageDraft>(
     key: Key,
@@ -628,7 +672,7 @@ export function PackageLabelScanner({
               >
                 <ScanBarcode size={64} className="text-emerald-400" />
                 <p className="mt-4 text-xl font-bold text-white">TC57 listo para escanear</p>
-                <p className="mt-2 text-sm text-slate-400">Presiona el gatillo. DataWedge debe enviar el código seguido de Enter.</p>
+                <p className="mt-2 text-sm text-slate-400">Presiona el gatillo. El código se confirma y avanza automáticamente; Enter es opcional.</p>
                 <label className="mt-5 w-full max-w-md text-left text-xs font-bold uppercase tracking-wide text-slate-400">
                   Entrada del escáner
                   <input
@@ -637,15 +681,16 @@ export function PackageLabelScanner({
                     autoFocus
                     autoComplete="off"
                     inputMode="none"
-                    onChange={(event) => setHardwareInput(event.target.value)}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setHardwareInput(value)
+                      scheduleHardwareValue(value)
+                    }}
                     onKeyDown={(event) => {
                       if (event.key !== 'Enter' && event.key !== 'Tab') return
 
                       event.preventDefault()
-                      const rawValue = event.currentTarget.value
-                      setHardwareInput('')
-                      if (rawValue.trim()) confirmRawScan(rawValue, true)
-                      window.setTimeout(() => hardwareInputRef.current?.focus(), 0)
+                      processHardwareValue(event.currentTarget.value)
                     }}
                     placeholder={`Esperando código ${scanTarget === 'PACKAGE' ? '3S/4S' : scanTarget}…`}
                     className="mt-2 min-h-12 w-full rounded-xl border border-emerald-500/50 bg-slate-950 px-4 text-base font-semibold uppercase text-white outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/20"
