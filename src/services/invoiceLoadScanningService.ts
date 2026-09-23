@@ -70,6 +70,31 @@ function roundQuantity(value: number) {
   return Math.round(Number(value || 0) * 10000) / 10000
 }
 
+function parseLabelQuantity(value: string) {
+  const cleaned = cleanScanCode(value)
+    .replace(/^Q/i, '')
+    .trim()
+
+  if (!cleaned) {
+    return null
+  }
+
+  // Some supplier labels print/encode quantities such as 12:000.
+  // Treat the colon as the decimal separator, not as thousands.
+  const normalized = cleaned
+    .replace(/:/g, '.')
+    .replace(/,/g, '')
+
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) {
+    return null
+  }
+
+  const quantity = Number(normalized)
+  return Number.isFinite(quantity) && quantity > 0
+    ? roundQuantity(quantity)
+    : null
+}
+
 async function findWarehousePackage(rawCode: string) {
   const cleaned = cleanScanCode(rawCode)
 
@@ -279,10 +304,206 @@ export async function scanInvoicePackage(
     throw new Error('El escaneo está vacío.')
   }
 
-  if (cleanedInput.startsWith('P') && cleanedInput.length > 1) {
-    const partNumber = cleanedInput.slice(1).trim()
+  const multiBarcodeValues = rawCode
+    .split('|')
+    .map((value) => cleanScanCode(value))
+    .filter(Boolean)
+
+  if (multiBarcodeValues.length >= 2) {
+    const candidates = await Promise.all(
+      multiBarcodeValues.map(async (value) => {
+        const hasPrefix =
+          value.startsWith('P') && value.length > 1
+        const partNumber = hasPrefix
+          ? value.slice(1).trim()
+          : value
+        const quantities =
+          await getExpectedAndScannedQuantity(
+            invoiceId,
+            partNumber,
+          )
+
+        return {
+          original: value,
+          hasPrefix,
+          partNumber,
+          ...quantities,
+        }
+      }),
+    )
+
+    const matchingParts = candidates.filter(
+      (candidate) => candidate.expectedQuantity > 0,
+    )
+    const partCandidate =
+      matchingParts.find((candidate) => candidate.hasPrefix) ||
+      matchingParts[0]
+
+    if (!partCandidate) {
+      const message =
+        `NO SE VA: ninguno de estos códigos coincide con una parte de la factura (${multiBarcodeValues.join(', ')}).`
+      const scan = await insertScan({
+        invoiceId,
+        packageRecord: null,
+        rawCode: multiBarcodeValues.join('|'),
+        partNumber: null,
+        quantity: 0,
+        result: 'not_in_invoice',
+        message,
+      })
+
+      return {
+        scan,
+        expectedQuantity: 0,
+        scannedQuantity: 0,
+        remainingQuantity: 0,
+        trackingCode: null,
+      }
+    }
+
+    const explicitQuantityCandidate =
+      multiBarcodeValues.find(
+        (value) =>
+          value !== partCandidate.original &&
+          value.startsWith('Q') &&
+          parseLabelQuantity(value) !== null,
+      )
+    const remainingBeforeScan = roundQuantity(
+      partCandidate.expectedQuantity -
+        partCandidate.scannedQuantity,
+    )
+    const rawQuantityCandidates = multiBarcodeValues
+      .filter(
+        (value) =>
+          value !== partCandidate.original &&
+          !value.startsWith('Q'),
+      )
+      .map((value) => ({
+        value,
+        quantity: parseLabelQuantity(value),
+      }))
+      .filter(
+        (candidate): candidate is {
+          value: string
+          quantity: number
+        } =>
+          candidate.quantity !== null &&
+          candidate.quantity <=
+            remainingBeforeScan + 0.0001,
+      )
+    const rawQuantityCandidate =
+      rawQuantityCandidates.length === 1
+        ? rawQuantityCandidates[0]
+        : null
+    const labelQuantity = explicitQuantityCandidate
+      ? parseLabelQuantity(explicitQuantityCandidate)
+      : rawQuantityCandidate?.quantity ?? null
+
+    if (labelQuantity === null) {
+      const message =
+        rawQuantityCandidates.length > 1
+          ? `Se encontró la parte ${partCandidate.partNumber}, pero hay varias cantidades posibles. Escanea solamente Parte y Cantidad.`
+          : `Se encontró la parte ${partCandidate.partNumber}, pero no una cantidad válida en la misma lectura.`
+      const scan = await insertScan({
+        invoiceId,
+        packageRecord: null,
+        rawCode: multiBarcodeValues.join('|'),
+        partNumber: partCandidate.partNumber,
+        quantity: 0,
+        result: 'not_found',
+        message,
+      })
+
+      return {
+        scan,
+        expectedQuantity: partCandidate.expectedQuantity,
+        scannedQuantity: partCandidate.scannedQuantity,
+        remainingQuantity: roundQuantity(
+          partCandidate.expectedQuantity -
+            partCandidate.scannedQuantity,
+        ),
+        trackingCode: null,
+      }
+    }
+
+    const nextScannedQuantity = roundQuantity(
+      partCandidate.scannedQuantity + labelQuantity,
+    )
+
+    if (
+      nextScannedQuantity >
+      partCandidate.expectedQuantity + 0.0001
+    ) {
+      const message =
+        `NO SE VA: la label trae ${labelQuantity} de ${partCandidate.partNumber}, pero sólo faltan ${roundQuantity(partCandidate.expectedQuantity - partCandidate.scannedQuantity)}.`
+      const scan = await insertScan({
+        invoiceId,
+        packageRecord: null,
+        rawCode: multiBarcodeValues.join('|'),
+        partNumber: partCandidate.partNumber,
+        quantity: 0,
+        result: 'quantity_exceeded',
+        message,
+      })
+
+      return {
+        scan,
+        expectedQuantity: partCandidate.expectedQuantity,
+        scannedQuantity: partCandidate.scannedQuantity,
+        remainingQuantity: roundQuantity(
+          partCandidate.expectedQuantity -
+            partCandidate.scannedQuantity,
+        ),
+        trackingCode: null,
+      }
+    }
+
+    const remainingQuantity = roundQuantity(
+      partCandidate.expectedQuantity - nextScannedQuantity,
+    )
+    const message = remainingQuantity <= 0
+      ? `SE VA: ${partCandidate.partNumber} +${labelQuantity}; quedó completo.`
+      : `SE VA: ${partCandidate.partNumber} +${labelQuantity}. Faltan ${remainingQuantity}.`
+    const scan = await insertScan({
+      invoiceId,
+      packageRecord: null,
+      rawCode: multiBarcodeValues.join('|'),
+      partNumber: partCandidate.partNumber,
+      quantity: labelQuantity,
+      result: 'accepted',
+      message,
+    })
+
+    return {
+      scan,
+      expectedQuantity: partCandidate.expectedQuantity,
+      scannedQuantity: nextScannedQuantity,
+      remainingQuantity,
+      trackingCode: null,
+    }
+  }
+
+  const hasPartPrefix =
+    cleanedInput.startsWith('P') && cleanedInput.length > 1
+  const possiblePartNumber = hasPartPrefix
+    ? cleanedInput.slice(1).trim()
+    : cleanedInput
+  const possiblePartQuantities =
+    await getExpectedAndScannedQuantity(
+      invoiceId,
+      possiblePartNumber,
+    )
+
+  // Supplier labels sometimes encode only the raw part value. Treat a raw
+  // scan as a part only when it exactly matches an imported invoice line;
+  // otherwise continue looking for a package/tracking identifier.
+  if (
+    hasPartPrefix ||
+    possiblePartQuantities.expectedQuantity > 0
+  ) {
+    const partNumber = possiblePartNumber
     const { expectedQuantity, scannedQuantity } =
-      await getExpectedAndScannedQuantity(invoiceId, partNumber)
+      possiblePartQuantities
 
     if (expectedQuantity <= 0) {
       const message = `NO SE VA: la parte ${partNumber} no aparece en la factura.`

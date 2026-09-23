@@ -15,6 +15,11 @@ import {
   X,
 } from 'lucide-react'
 import type { QuickReceptionPackageInput } from '../../../services/quickReceivingService'
+import {
+  inferRawPartAndQuantity,
+  parseIndustrialLabelPayload,
+  parsePositiveQuantity,
+} from '../../../utils/industrialLabelParser'
 
 type PackageLabelScannerProps = {
   onClose: () => void
@@ -113,9 +118,9 @@ function cleanRawCode(value: string) {
     .toUpperCase()
 }
 
-function parseLabelCode(rawValue: string) {
+function parseLabelCode(rawValue: string, expectedTarget?: ScanTarget) {
   const rawCode = cleanRawCode(rawValue)
-  const field = (
+  let field = (
     rawCode.startsWith('3S')
       ? '3S'
       : rawCode.startsWith('4S')
@@ -124,12 +129,20 @@ function parseLabelCode(rawValue: string) {
   ) as ScanField
 
   if (!['P', 'K', 'Q', 'V', '3S', '4S'].includes(field)) {
-    throw new Error(
-      `Código no reconocido: ${rawCode || 'lectura vacía'}. Apunta a P, K, Q, V, 3S o 4S.`,
-    )
+    if (expectedTarget && expectedTarget !== 'PACKAGE') {
+      field = expectedTarget
+    } else {
+      throw new Error(
+        `Código no reconocido: ${rawCode || 'lectura vacía'}. Apunta al campo seleccionado.`,
+      )
+    }
   }
 
-  const value = rawCode.slice(field.length).trim()
+  const hasExplicitPrefix =
+    rawCode.startsWith(field)
+  const value = hasExplicitPrefix
+    ? rawCode.slice(field.length).trim()
+    : rawCode
 
   if (!value) {
     throw new Error(`El código ${field} no contiene información.`)
@@ -232,7 +245,7 @@ export function PackageLabelScanner({
   const [photoBusy, setPhotoBusy] = useState(false)
   const [scanTarget, setScanTarget] = useState<ScanTarget>('P')
   const scanTargetRef = useRef<ScanTarget>('P')
-  const [message, setMessage] = useState('Seleccionado P: apunta solamente al código del número de parte.')
+  const [message, setMessage] = useState('Escanea la label completa o selecciona el campo que vas a capturar.')
   const [messageType, setMessageType] = useState<'neutral' | 'success' | 'error'>('neutral')
   const [hardwareInput, setHardwareInput] = useState('')
 
@@ -255,7 +268,146 @@ export function PackageLabelScanner({
     lastScanRef.current = { value: cleaned, time: now }
 
     try {
-      const { field, rawCode, value } = parseLabelCode(rawValue)
+      const payloadTokens = parseIndustrialLabelPayload(rawValue)
+
+      if (payloadTokens.length > 1) {
+        const inferred = inferRawPartAndQuantity(payloadTokens)
+        const explicitPart = payloadTokens.find(
+          (token) => token.field === 'P' && token.value,
+        )
+        const explicitQuantity = payloadTokens.find(
+          (token) =>
+            token.field === 'Q' &&
+            parsePositiveQuantity(token.value) !== null,
+        )
+        const partNumber =
+          explicitPart?.value || inferred?.partNumber || ''
+        const quantity = explicitQuantity
+          ? parsePositiveQuantity(explicitQuantity.value)
+          : inferred?.quantity ?? null
+
+        if (continuousPartMode) {
+          if (!partNumber) {
+            throw new Error(
+              'No se pudo distinguir el número de parte. Escanea solamente Parte y Cantidad.',
+            )
+          }
+
+          onSave({
+            partNumber: partNumber.trim().toUpperCase(),
+            purchaseOrder: '',
+            quantity,
+            supplierCode: '',
+            supplierPackageId: '',
+            supplierPackageType: null,
+            rawCodes: Object.fromEntries(
+              payloadTokens.map((token, index) => [
+                `${token.field}_${index + 1}`,
+                token.rawCode,
+              ]),
+            ),
+          })
+          setMessage(
+            quantity === null
+              ? `Parte ${partNumber} agregada; cantidad pendiente.`
+              : `Parte ${partNumber}, cantidad ${quantity}, agregada.`,
+          )
+          setMessageType('success')
+          navigator.vibrate?.([80, 45, 80])
+          return
+        }
+
+        let nextDraft = { ...draftRef.current }
+        let rawIndex = 1
+
+        for (const token of payloadTokens) {
+          if (
+            token.field === 'P' ||
+            token.field === 'K' ||
+            token.field === 'Q' ||
+            token.field === 'V' ||
+            token.field === '3S' ||
+            token.field === '4S'
+          ) {
+            const parsedQuantity =
+              token.field === 'Q'
+                ? parsePositiveQuantity(token.value)
+                : null
+            nextDraft = applyScan(
+              nextDraft,
+              token.field,
+              token.rawCode,
+              parsedQuantity === null
+                ? token.value
+                : String(parsedQuantity),
+            )
+            continue
+          }
+
+          const key = token.field === 'UNKNOWN'
+            ? `RAW_${rawIndex++}`
+            : token.field
+          nextDraft = {
+            ...nextDraft,
+            rawCodes: {
+              ...nextDraft.rawCodes,
+              [key]: token.rawCode,
+            },
+          }
+        }
+
+        if (!nextDraft.partNumber && partNumber) {
+          nextDraft.partNumber = partNumber
+        }
+        if (!nextDraft.quantity && quantity !== null) {
+          nextDraft.quantity = String(quantity)
+        }
+
+        updateDraft(nextDraft)
+        const nextTarget: ScanTarget = !nextDraft.partNumber
+          ? 'P'
+          : !nextDraft.quantity
+            ? 'Q'
+            : 'P'
+        scanTargetRef.current = nextTarget
+        setScanTarget(nextTarget)
+        setMessage(
+          partNumber && quantity !== null
+            ? `Label capturada: parte ${partNumber}, cantidad ${quantity}. Revisa y agrega el paquete.`
+            : `Se guardaron ${payloadTokens.length} códigos. Confirma Parte y Cantidad.`,
+        )
+        setMessageType(
+          partNumber && quantity !== null ? 'success' : 'neutral',
+        )
+        navigator.vibrate?.(120)
+        return
+      }
+
+      const singleToken = payloadTokens[0]
+      if (
+        !continuousPartMode &&
+        singleToken &&
+        (singleToken.field === '2K' || singleToken.field === 'S')
+      ) {
+        updateDraft({
+          ...draftRef.current,
+          rawCodes: {
+            ...draftRef.current.rawCodes,
+            [singleToken.field]: singleToken.rawCode,
+          },
+        })
+        setMessage(
+          `${singleToken.field} guardado como información adicional: ${singleToken.value}.`,
+        )
+        setMessageType('success')
+        navigator.vibrate?.(120)
+        return
+      }
+
+      const { field, rawCode, value } = parseLabelCode(
+        rawValue,
+        scanTargetRef.current,
+      )
 
       if (!targetMatchesField(scanTargetRef.current, field)) {
         const expected = scanTargetRef.current === 'PACKAGE'
@@ -412,7 +564,10 @@ export function PackageLabelScanner({
         const results = await decodeImage(context.getImageData(0, 0, cropWidth, cropHeight))
         const matching = results.find(({ text }) => {
           try {
-            return targetMatchesField(scanTargetRef.current, parseLabelCode(text).field)
+            return targetMatchesField(
+              scanTargetRef.current,
+              parseLabelCode(text, scanTargetRef.current).field,
+            )
           } catch {
             return false
           }
@@ -585,7 +740,10 @@ export function PackageLabelScanner({
       const results = await decodeImage(context.getImageData(0, 0, width, height))
       const matching = results.find(({ text }) => {
         try {
-          return targetMatchesField(scanTargetRef.current, parseLabelCode(text).field)
+          return targetMatchesField(
+            scanTargetRef.current,
+            parseLabelCode(text, scanTargetRef.current).field,
+          )
         } catch {
           return false
         }
@@ -673,7 +831,7 @@ export function PackageLabelScanner({
               >
                 <ScanBarcode size={64} className="text-emerald-400" />
                 <p className="mt-4 text-xl font-bold text-white">TC57 listo para escanear</p>
-                <p className="mt-2 text-sm text-slate-400">Presiona el gatillo. El código se confirma y avanza automáticamente; Enter es opcional.</p>
+                <p className="mt-2 text-sm text-slate-400">Presiona el gatillo para leer uno o varios códigos. La información reconocida se llena automáticamente; Enter es opcional.</p>
                 <label className="mt-5 w-full max-w-md text-left text-xs font-bold uppercase tracking-wide text-slate-400">
                   Entrada del escáner
                   <input
@@ -859,6 +1017,24 @@ export function PackageLabelScanner({
             </label>
           </div>}
 
+          {!continuousPartMode && Object.keys(draft.rawCodes).length > 0 && (
+            <div className="mt-4 rounded-xl border border-slate-700 bg-slate-950 p-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                Todos los códigos guardados
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {Object.entries(draft.rawCodes).map(([key, value]) => (
+                  <span
+                    key={`${key}-${value}`}
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 font-mono text-xs text-slate-300"
+                  >
+                    {key}: {value}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className={continuousPartMode ? 'mt-5' : 'mt-5 grid gap-3 sm:grid-cols-2'}>
             <button
               type="button"
@@ -880,8 +1056,8 @@ export function PackageLabelScanner({
           <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-slate-500">
             <Barcode className="mt-0.5 shrink-0" size={16} />
             {continuousPartMode
-              ? 'Escanea el código P de cada bulto. Cada lectura suma un bulto y permanece en la lista; también acepta lectores Zebra, Bluetooth o USB configurados para enviar Enter.'
-              : 'Motor ZXing-C++ de alta precisión. Solo se analiza el área verde y se confirma cada lectura dos veces. También acepta lectores Zebra, Bluetooth o USB configurados para enviar Enter. Puedes corregir cualquier campo manualmente.'}
+              ? 'Escanea Parte y Cantidad juntas o por separado. Cada label suma un bulto; puedes corregir la cantidad después.'
+              : 'El TC57 guarda P, Q, K, V, 2K, S, 3S/4S y también conserva códigos desconocidos. Confirma Parte y Cantidad antes de agregar el paquete.'}
           </p>
         </div>
       </div>

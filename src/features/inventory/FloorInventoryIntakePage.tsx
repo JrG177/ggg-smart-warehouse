@@ -6,6 +6,12 @@ import { PackageLabelScanner } from '../receiving/components/PackageLabelScanner
 import { createReception } from '../../services/receivingService'
 import { createNormalReceptionPackages } from '../../services/normalReceptionPackageService'
 import type { QuickReceptionPackageInput } from '../../services/quickReceivingService'
+import {
+  cleanBarcodeValue,
+  inferRawPartAndQuantity,
+  parseIndustrialLabelPayload,
+  parsePositiveQuantity,
+} from '../../utils/industrialLabelParser'
 
 type IntakeLine = {
   partNumber: string
@@ -84,32 +90,91 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       window.clearTimeout(scannerIdleTimerRef.current)
       scannerIdleTimerRef.current = null
     }
-    const cleaned = rawValue
-      .split('')
-      .filter((character) => {
-        const code = character.charCodeAt(0)
-        return code > 31 && code !== 127
-      })
-      .join('')
-      .trim()
-      .replace(/^\*|\*$/g, '')
-      .replace(/^\][A-Z][0-9]/i, '')
-      .toUpperCase()
+    const cleaned = cleanBarcodeValue(rawValue)
 
     if (!cleaned) return
 
-    if (scanTarget === 'P' && !cleaned.startsWith('P')) {
+    const payloadTokens = parseIndustrialLabelPayload(rawValue)
+    if (payloadTokens.length > 1) {
+      const explicitPart = payloadTokens.find(
+        (token) => token.field === 'P' && token.value,
+      )
+      const explicitQuantity = payloadTokens.find(
+        (token) =>
+          token.field === 'Q' &&
+          parsePositiveQuantity(token.value) !== null,
+      )
+      const inferred = inferRawPartAndQuantity(payloadTokens)
+      const partNumber =
+        explicitPart?.value || inferred?.partNumber || ''
+      const quantity = explicitQuantity
+        ? parsePositiveQuantity(explicitQuantity.value)
+        : inferred?.quantity ?? null
+
+      if (!partNumber || quantity === null) {
+        setScannerInput('')
+        setScannerMessage(
+          'La label fue leída, pero no se pudo distinguir Parte y Cantidad. Apunta solamente a esos dos barcodes o captúralos por separado.',
+        )
+        navigator.vibrate?.([180, 80, 180])
+        window.setTimeout(
+          () => scannerInputRef.current?.focus(),
+          0,
+        )
+        return
+      }
+
+      addScan({
+        partNumber,
+        purchaseOrder: '',
+        quantity,
+        supplierCode: '',
+        supplierPackageId: '',
+        supplierPackageType: null,
+        rawCodes: Object.fromEntries(
+          payloadTokens.map((token, index) => [
+            `${token.field}_${index + 1}`,
+            token.rawCode,
+          ]),
+        ),
+      })
       setScannerInput('')
-      setScannerMessage(`Código ${cleaned} ignorado. Escanea únicamente el código P.`)
-      navigator.vibrate?.(180)
-      window.setTimeout(() => scannerInputRef.current?.focus(), 0)
+      setScannerMessage(
+        `Parte ${partNumber}, cantidad ${quantity}, agregada en una lectura.`,
+      )
+      setPendingPartNumber('')
+      setScanTarget('P')
+      navigator.vibrate?.([80, 40, 80])
+      window.setTimeout(
+        () => scannerInputRef.current?.focus(),
+        0,
+      )
       return
     }
 
     if (scanTarget === 'P') {
-      const partNumber = cleaned.slice(1).trim()
+      const hasKnownNonPartPrefix =
+        cleaned.startsWith('Q') ||
+        cleaned.startsWith('K') ||
+        cleaned.startsWith('V') ||
+        cleaned.startsWith('3S') ||
+        cleaned.startsWith('4S')
+
+      if (hasKnownNonPartPrefix) {
+        setScannerInput('')
+        setScannerMessage(`Código ${cleaned} ignorado. Apunta al código del número de parte.`)
+        navigator.vibrate?.(180)
+        window.setTimeout(() => scannerInputRef.current?.focus(), 0)
+        return
+      }
+
+      // Some daily supplier labels encode the part directly (2128303 or
+      // 1136-2618) instead of using the AIAG P prefix.
+      const partNumber = (cleaned.startsWith('P')
+        ? cleaned.slice(1)
+        : cleaned).trim()
       if (!partNumber) {
-        setScannerMessage('El código P no contiene un número de parte.')
+        setScannerMessage('La lectura no contiene un número de parte.')
         return
       }
 
@@ -122,18 +187,21 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       return
     }
 
-    if (!cleaned.startsWith('Q')) {
+    const quantityText = (cleaned.startsWith('Q')
+      ? cleaned.slice(1)
+      : cleaned).trim()
+
+    if (!/^\d+$/.test(quantityText)) {
       setScannerInput('')
-      setScannerMessage(`Código ${cleaned} ignorado. Para ${pendingPartNumber} debes escanear Q.`)
+      setScannerMessage(`Código ${cleaned} ignorado. Para ${pendingPartNumber} escanea la cantidad.`)
       navigator.vibrate?.(180)
       window.setTimeout(() => scannerInputRef.current?.focus(), 0)
       return
     }
 
-    const quantityText = cleaned.slice(1).trim()
     const quantity = Number(quantityText)
-    if (!pendingPartNumber || !Number.isInteger(quantity) || quantity < 1) {
-      setScannerMessage('La lectura no contiene un número de parte.')
+    if (!pendingPartNumber || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000000) {
+      setScannerMessage('La lectura no contiene una cantidad válida.')
       return
     }
 
@@ -144,7 +212,7 @@ export function FloorInventoryIntakePage({ onSaved }: { onSaved?: () => void }) 
       supplierCode: '',
       supplierPackageId: '',
       supplierPackageType: null,
-      rawCodes: { P: `P${pendingPartNumber}`, Q: cleaned },
+      rawCodes: { P: pendingPartNumber, Q: cleaned },
     })
     setScannerInput('')
     setScannerMessage(`Parte ${pendingPartNumber}, cantidad ${quantity}, agregada.`)

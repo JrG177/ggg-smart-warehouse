@@ -55,6 +55,7 @@ export type WarehousePackage = {
   supplier_code: string | null
   supplier_package_id: string | null
   supplier_package_type: '3S' | '4S' | null
+  raw_codes: Record<string, string>
   status: 'received' | 'assigned' | 'shipped'
   created_at: string
 }
@@ -111,6 +112,7 @@ export async function getQuickReceptionHistory() {
         supplier_code,
         supplier_package_id,
         supplier_package_type,
+        raw_codes,
         status,
         created_at
       )
@@ -499,6 +501,7 @@ export async function createQuickReception(
           supplier_code,
           supplier_package_id,
           supplier_package_type,
+          raw_codes,
           status,
           created_at
         `)

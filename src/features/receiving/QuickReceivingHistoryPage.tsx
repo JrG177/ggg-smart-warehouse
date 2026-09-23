@@ -355,6 +355,11 @@ export function QuickReceivingHistoryPage({
                                   ? ` · ${item.supplier_package_type || ''}${item.supplier_package_id}`
                                   : ''}
                               </p>
+                              {Object.keys(item.raw_codes || {}).length > 0 && (
+                                <p className="mt-2 break-words font-mono text-[10px] text-slate-600">
+                                  Label: {Object.values(item.raw_codes).join(' · ')}
+                                </p>
+                              )}
                             </div>
                           ))}
                         </div>

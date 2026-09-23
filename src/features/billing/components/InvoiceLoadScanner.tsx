@@ -814,7 +814,7 @@ export function InvoiceLoadScanner({
                   TC57 listo
                 </p>
                 <p className="mt-1 text-sm text-slate-300">
-                  Presiona un gatillo lateral y escanea el código P. No necesitas abrir la cámara ni presionar Enter.
+                  Presiona y sostén un gatillo para leer Parte + Cantidad de la label. También acepta una parte individual. No necesitas abrir la cámara ni presionar Enter.
                 </p>
               </div>
 
@@ -855,7 +855,7 @@ export function InvoiceLoadScanner({
 
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-slate-400">
-                Si el Zebra pita, la lectura aparecerá aquí y se verificará automáticamente.
+                MultiBarcode usa el separador |. Apunta primero a Parte y después a Cantidad sin soltar el gatillo.
               </p>
               <button
                 type="button"

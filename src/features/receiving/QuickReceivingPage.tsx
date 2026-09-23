@@ -539,7 +539,7 @@ export function QuickReceivingPage() {
                 </span>
               </div>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                Escanea los códigos P, K, Q, V y 3S/4S de cada label. Por ahora es opcional.
+                Escanea la label completa. Se guardan Parte, Cantidad, PO, proveedor, paquete y cualquier código adicional que pueda leer el TC57.
               </p>
             </div>
 
