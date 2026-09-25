@@ -586,7 +586,17 @@ export function InvoiceLoadScanner({
       ) {
         if (externalScanRef.current.value) {
           event.preventDefault()
-          flushExternalScan()
+          externalScanRef.current.value =
+            `${externalScanRef.current.value.replace(/\|+$/g, '')}|`
+
+          if (externalIdleTimerRef.current !== null) {
+            window.clearTimeout(externalIdleTimerRef.current)
+          }
+
+          externalIdleTimerRef.current = window.setTimeout(
+            flushExternalScan,
+            450,
+          )
         }
 
         return
@@ -814,7 +824,7 @@ export function InvoiceLoadScanner({
                   TC57 listo
                 </p>
                 <p className="mt-1 text-sm text-slate-300">
-                  Presiona y sostén un gatillo para leer Parte + Cantidad de la label. También acepta una parte individual. No necesitas abrir la cámara ni presionar Enter.
+                  Presiona y sostén un gatillo para leer Parte + Cantidad de la label. Una lectura de Parte sola no sumará piezas cuando todavía falte la cantidad. No necesitas abrir la cámara ni presionar Enter.
                 </p>
               </div>
 
@@ -840,7 +850,17 @@ export function InvoiceLoadScanner({
                 }
 
                 event.preventDefault()
-                submitHardwareCode(event.currentTarget.value)
+                // Some DataWedge MultiBarcode profiles send Enter between
+                // decoded values. Keep collecting briefly so P + Q reaches
+                // the service as one payload instead of two separate scans.
+                const currentValue = event.currentTarget.value
+                  .replace(/\|+$/g, '')
+                const combinedValue = currentValue
+                  ? `${currentValue}|`
+                  : ''
+                event.currentTarget.value = combinedValue
+                setHardwareCode(combinedValue)
+                scheduleHardwareCode(combinedValue)
               }}
               onFocus={(event) => event.currentTarget.select()}
               autoFocus
@@ -855,7 +875,7 @@ export function InvoiceLoadScanner({
 
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-slate-400">
-                MultiBarcode usa el separador |. Apunta primero a Parte y después a Cantidad sin soltar el gatillo.
+                MultiBarcode usa el separador |. Apunta a Parte y Cantidad sin soltar el gatillo; el orden no importa.
               </p>
               <button
                 type="button"
@@ -903,7 +923,7 @@ export function InvoiceLoadScanner({
                   className="mt-0.5 shrink-0 text-emerald-400"
                   size={19}
                 />
-                Escanea el código P del número de parte. La cámara y la captura manual quedan únicamente como respaldo.
+                Escanea la label completa. El sistema debe recibir el número de parte y la cantidad en la misma lectura.
               </p>
 
               <form
@@ -919,7 +939,7 @@ export function InvoiceLoadScanner({
                   onChange={(event) =>
                     setManualCode(event.target.value)
                   }
-                  placeholder="Prueba manual: P580-0731"
+                  placeholder="Prueba manual: P580-0731|Q54"
                   className="min-w-0 flex-1 rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 outline-none focus:border-emerald-500"
                 />
                 <button

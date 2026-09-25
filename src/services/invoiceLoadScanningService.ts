@@ -66,6 +66,15 @@ function cleanScanCode(value: string) {
     .toUpperCase()
 }
 
+function splitScanPayload(value: string) {
+  return value
+    // DataWedge can separate MultiBarcode values with a printable separator
+    // or with Enter/Tab/GS depending on the profile configuration.
+    .split(/[|\r\n\t\u001d\u001e]+/)
+    .map((token) => cleanScanCode(token))
+    .filter(Boolean)
+}
+
 function normalizePartNumber(value: string) {
   return value
     .trim()
@@ -405,10 +414,7 @@ export async function scanInvoicePackage(
     throw new Error('El escaneo está vacío.')
   }
 
-  const multiBarcodeValues = rawCode
-    .split('|')
-    .map((value) => cleanScanCode(value))
-    .filter(Boolean)
+  const multiBarcodeValues = splitScanPayload(rawCode)
 
   if (multiBarcodeValues.length >= 2) {
     const candidates = await Promise.all(
@@ -627,6 +633,35 @@ export async function scanInvoicePackage(
       }
     }
 
+    const remainingQuantity = roundQuantity(
+      expectedQuantity - scannedQuantity,
+    )
+
+    // A part-only barcode does not prove how many pieces are in the box.
+    // Only accept it as one piece when exactly one unit remains. Otherwise
+    // require the quantity barcode in the same MultiBarcode reading.
+    if (remainingQuantity > 1.0001) {
+      const message =
+        `PARTE ENCONTRADA: ${partNumber}. Falta leer la Cantidad de la misma label; no se agregó ninguna pieza.`
+      const scan = await insertScan({
+        invoiceId,
+        packageRecord: null,
+        rawCode: cleanedInput,
+        partNumber,
+        quantity: 0,
+        result: 'not_found',
+        message,
+      })
+
+      return {
+        scan,
+        expectedQuantity,
+        scannedQuantity,
+        remainingQuantity,
+        trackingCode: null,
+      }
+    }
+
     if (scannedQuantity + 1 > expectedQuantity + 0.0001) {
       const message = `CANTIDAD COMPLETA: ya se registraron ${expectedQuantity} de ${partNumber}.`
       const scan = await insertScan({
@@ -649,10 +684,10 @@ export async function scanInvoicePackage(
     }
 
     const nextScannedQuantity = roundQuantity(scannedQuantity + 1)
-    const remainingQuantity = roundQuantity(expectedQuantity - nextScannedQuantity)
-    const message = remainingQuantity <= 0
+    const remainingAfterScan = roundQuantity(expectedQuantity - nextScannedQuantity)
+    const message = remainingAfterScan <= 0
       ? `SE VA: ${partNumber} quedó completo.`
-      : `SE VA: ${partNumber} agregado. Faltan ${remainingQuantity}.`
+      : `SE VA: ${partNumber} agregado. Faltan ${remainingAfterScan}.`
     const scan = await insertScan({
       invoiceId,
       packageRecord: null,
@@ -667,7 +702,7 @@ export async function scanInvoicePackage(
       scan,
       expectedQuantity,
       scannedQuantity: nextScannedQuantity,
-      remainingQuantity,
+      remainingQuantity: remainingAfterScan,
       trackingCode: null,
     }
   }

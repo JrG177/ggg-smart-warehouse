@@ -2000,11 +2000,6 @@ const saveInvoiceChanges =
               ),
         )
 
-      const reconciliation =
-        getInvoiceReconciliation(
-          invoice,
-        )
-
       const finalPackageCount =
         Number(
           completionPackageCounts[
@@ -2060,33 +2055,6 @@ const saveInvoiceChanges =
           'Captura un # de Bultos válido antes de completar la factura.',
         )
         return
-      }
-
-      if (
-        invoiceParts.length > 0 &&
-        reconciliation?.hasDifferences
-      ) {
-        const confirmed = window.confirm(
-          `Esta factura tiene ${reconciliation.differenceCount} diferencia(s) entre el archivo importado y las recepciones. ¿Confirmas que ya fueron revisadas y deseas completar la factura?`,
-        )
-
-        if (!confirmed) {
-          setExpandedReconciliations(
-            (current) => ({
-              ...current,
-              [invoice.id]: true,
-            }),
-          )
-
-          setReconciliationFilters(
-            (current) => ({
-              ...current,
-              [invoice.id]: 'differences',
-            }),
-          )
-
-          return
-        }
       }
 
       try {
@@ -2945,10 +2913,12 @@ const saveInvoiceChanges =
                       ? String(invoice.package_count)
                       : '')
 
+                  const hasLinkedReceptions =
+                    invoice.invoice_receptions.length > 0
                   const reconciliation =
-                    getInvoiceReconciliation(
-                      invoice,
-                    )
+                    hasLinkedReceptions
+                      ? getInvoiceReconciliation(invoice)
+                      : null
 
                   const reconciliationFilter =
                     reconciliationFilters[
@@ -3000,6 +2970,24 @@ const saveInvoiceChanges =
                           </p>
                         )}
 
+                        {imported && loadCompletion && (
+                          <p
+                            className={[
+                              'mt-2 inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 text-xs font-semibold',
+                              loadCompletion.complete
+                                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                                : 'border-blue-500/30 bg-blue-500/10 text-blue-300',
+                            ].join(' ')}
+                          >
+                            {loadCompletion.complete
+                              ? <CheckCircle2 size={14} />
+                              : <ScanBarcode size={14} />}
+                            {loadCompletion.scannedQuantity.toLocaleString('es-MX')} de{' '}
+                            {loadCompletion.expectedQuantity.toLocaleString('es-MX')}{' '}
+                            unidades verificadas
+                          </p>
+                        )}
+
                         {reconciliation && (
                           <p
                             className={[
@@ -3013,8 +3001,8 @@ const saveInvoiceChanges =
                               ? <AlertTriangle size={14} />
                               : <CheckCircle2 size={14} />}
                             {reconciliation.hasDifferences
-                              ? `${reconciliation.differenceCount} diferencia(s) por revisar`
-                              : 'Factura y recepciones coinciden'}
+                              ? `Comparación opcional: ${reconciliation.differenceCount} diferencia(s)`
+                              : 'Comparación opcional: recepción coincide'}
                           </p>
                         )}
                       </div>
@@ -3029,7 +3017,7 @@ const saveInvoiceChanges =
                             className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950"
                           >
                             <ScanBarcode size={18} />
-                            Agregar números de parte
+                            Verificar carga
                           </button>
                         )}
 
@@ -3177,7 +3165,7 @@ const saveInvoiceChanges =
 
                             <span>
                               <span className="block font-semibold">
-                                Conciliación factura vs. recepciones
+                                Comparación opcional con recepciones
                               </span>
 
                               <span className="mt-1 block text-sm text-slate-400">
@@ -3195,9 +3183,7 @@ const saveInvoiceChanges =
                                   : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
                               ].join(' ')}
                             >
-                              {reconciliation.hasDifferences
-                                ? 'Revisión necesaria'
-                                : 'Todo coincide'}
+                              No bloquea la factura
                             </span>
                           </button>
 
@@ -3239,7 +3225,7 @@ const saveInvoiceChanges =
                                   />
 
                                   <p>
-                                    Revisa estas diferencias antes de cargar. Si intentas completar la factura, el sistema solicitará una confirmación adicional.
+                                    Esta comparación es informativa. La factura se completa con el progreso de Parte + Cantidad registrado por el escáner.
                                   </p>
                                 </div>
                               )}
