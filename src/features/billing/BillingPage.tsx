@@ -28,6 +28,10 @@ import {
 import { jsPDF } from 'jspdf'
 
 import { supabase } from '../../lib/supabase'
+import {
+  getInvoiceLoadCompletion,
+  type InvoiceLoadCompletion,
+} from '../../services/invoiceLoadScanningService'
 
 import {
   addInvoicePhotos,
@@ -537,6 +541,11 @@ export function BillingPage() {
       >
     >({})
 
+  const [
+    invoiceLoadCompletions,
+    setInvoiceLoadCompletions,
+  ] = useState<Record<string, InvoiceLoadCompletion>>({})
+
   const [statusTab, setStatusTab] =
     useState<'open' | 'completed' | 'osd'>(
       'open',
@@ -936,9 +945,60 @@ const loadInvoices =
           invoiceError.message,
         )
         setInvoices([])
+        setInvoiceLoadCompletions({})
       } else {
-        setInvoices(
-          (data || []) as Invoice[],
+        const loadedInvoices =
+          (data || []) as Invoice[]
+
+        setInvoices(loadedInvoices)
+
+        setCompletionPackageCounts((current) => {
+          const next = { ...current }
+
+          loadedInvoices.forEach((invoice) => {
+            if (
+              invoice.status === 'open' &&
+              !Object.prototype.hasOwnProperty.call(
+                next,
+                invoice.id,
+              ) &&
+              Number(invoice.package_count || 0) > 0
+            ) {
+              next[invoice.id] = String(invoice.package_count)
+            }
+          })
+
+          return next
+        })
+
+        const completionEntries = await Promise.all(
+          loadedInvoices
+            .filter(
+              (invoice) =>
+                invoice.status === 'open' &&
+                Boolean(getInvoiceImport(invoice)),
+            )
+            .map(async (invoice) => {
+              try {
+                return [
+                  invoice.id,
+                  await getInvoiceLoadCompletion(invoice.id),
+                ] as const
+              } catch {
+                return null
+              }
+            }),
+        )
+
+        setInvoiceLoadCompletions(
+          Object.fromEntries(
+            completionEntries.filter(
+              (
+                entry,
+              ): entry is readonly [string, InvoiceLoadCompletion] =>
+                entry !== null,
+            ),
+          ),
         )
       }
 
@@ -1902,6 +1962,7 @@ const saveInvoiceChanges =
       invoice:
         Invoice,
     ) => {
+      const imported = getInvoiceImport(invoice)
       const invoiceParts =
         invoice
           .invoice_receptions
@@ -1952,9 +2013,36 @@ const saveInvoiceChanges =
             '',
         )
 
-      if (
-        !allReviewed
-      ) {
+      if (imported) {
+        try {
+          const loadCompletion =
+            await getInvoiceLoadCompletion(invoice.id)
+
+          setInvoiceLoadCompletions((current) => ({
+            ...current,
+            [invoice.id]: loadCompletion,
+          }))
+
+          if (!loadCompletion.complete) {
+            const missing =
+              loadCompletion.incompletePartNumbers
+                .slice(0, 4)
+                .join(', ')
+
+            setError(
+              `Todavía falta comprobar la factura con el escáner. ${loadCompletion.scannedQuantity} de ${loadCompletion.expectedQuantity} unidades registradas${missing ? `. Pendientes: ${missing}` : ''}.`,
+            )
+            return
+          }
+        } catch (completionError) {
+          setError(
+            completionError instanceof Error
+              ? completionError.message
+              : 'No se pudo comprobar el avance de los escaneos.',
+          )
+          return
+        }
+      } else if (!allReviewed) {
         setError(
           'Debes marcar todas las recepciones antes de completar la factura.',
         )
@@ -1975,6 +2063,7 @@ const saveInvoiceChanges =
       }
 
       if (
+        invoiceParts.length > 0 &&
         reconciliation?.hasDifferences
       ) {
         const confirmed = window.confirm(
@@ -2845,6 +2934,17 @@ const saveInvoiceChanges =
                           ),
                     )
 
+                  const loadCompletion =
+                    invoiceLoadCompletions[invoice.id]
+                  const canCompleteInvoice = imported
+                    ? Boolean(loadCompletion?.complete)
+                    : allReviewed
+                  const completionPackageCount =
+                    completionPackageCounts[invoice.id] ??
+                    (Number(invoice.package_count || 0) > 0
+                      ? String(invoice.package_count)
+                      : '')
+
                   const reconciliation =
                     getInvoiceReconciliation(
                       invoice,
@@ -2995,10 +3095,7 @@ const saveInvoiceChanges =
                                 min="1"
                                 inputMode="numeric"
                                 value={
-                                  completionPackageCounts[
-                                    invoice.id
-                                  ] ||
-                                  ''
+                                  completionPackageCount
                                 }
                                 onChange={(
                                   event,
@@ -3024,20 +3121,14 @@ const saveInvoiceChanges =
                             <button
                               type="button"
                               disabled={
-                                !allReviewed ||
+                                !canCompleteInvoice ||
                                 !Number.isInteger(
                                   Number(
-                                    completionPackageCounts[
-                                      invoice.id
-                                    ] ||
-                                      '',
+                                    completionPackageCount,
                                   ),
                                 ) ||
                                 Number(
-                                  completionPackageCounts[
-                                    invoice.id
-                                  ] ||
-                                    0,
+                                  completionPackageCount || 0,
                                 ) <
                                   1
                               }
@@ -4225,7 +4316,10 @@ const saveInvoiceChanges =
             getInvoiceImport(scanningInvoice)
               ?.invoice_import_lines || []
           }
-          onClose={() => setScanningInvoice(null)}
+          onClose={() => {
+            setScanningInvoice(null)
+            void loadInvoices(true)
+          }}
         />
       )}
 

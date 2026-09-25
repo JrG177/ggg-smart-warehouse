@@ -45,6 +45,13 @@ type InvoiceLineRecord = {
   commercial_quantity: number
 }
 
+export type InvoiceLoadCompletion = {
+  complete: boolean
+  expectedQuantity: number
+  scannedQuantity: number
+  incompletePartNumbers: string[]
+}
+
 function cleanScanCode(value: string) {
   return value
     .split('')
@@ -291,6 +298,100 @@ async function getExpectedAndScannedQuantity(
   return {
     expectedQuantity,
     scannedQuantity,
+  }
+}
+
+export async function getInvoiceLoadCompletion(
+  invoiceId: string,
+): Promise<InvoiceLoadCompletion> {
+  const [linesResponse, scansResponse] =
+    await Promise.all([
+      supabase
+        .from('invoice_import_lines')
+        .select('part_number, commercial_quantity')
+        .eq('invoice_id', invoiceId),
+      supabase
+        .from('invoice_load_scans')
+        .select('part_number, quantity')
+        .eq('invoice_id', invoiceId)
+        .eq('result', 'accepted'),
+    ])
+
+  if (linesResponse.error) {
+    throw new Error(linesResponse.error.message)
+  }
+
+  if (scansResponse.error) {
+    throw new Error(scansResponse.error.message)
+  }
+
+  const expectedByPart = new Map<
+    string,
+    { partNumber: string; quantity: number }
+  >()
+
+  ;((linesResponse.data || []) as InvoiceLineRecord[])
+    .forEach((line) => {
+      const key = normalizePartNumber(line.part_number)
+      if (!key) return
+
+      const current = expectedByPart.get(key)
+      expectedByPart.set(key, {
+        partNumber:
+          current?.partNumber ||
+          line.part_number.trim().toUpperCase(),
+        quantity: roundQuantity(
+          (current?.quantity || 0) +
+            Number(line.commercial_quantity || 0),
+        ),
+      })
+    })
+
+  const scannedByPart = new Map<string, number>()
+
+  ;(scansResponse.data || []).forEach((scan) => {
+    const key = normalizePartNumber(
+      String(scan.part_number || ''),
+    )
+    if (!key) return
+
+    scannedByPart.set(
+      key,
+      roundQuantity(
+        (scannedByPart.get(key) || 0) +
+          Number(scan.quantity || 0),
+      ),
+    )
+  })
+
+  const expectedQuantity = roundQuantity(
+    Array.from(expectedByPart.values()).reduce(
+      (total, item) => total + item.quantity,
+      0,
+    ),
+  )
+  const scannedQuantity = roundQuantity(
+    Array.from(expectedByPart.keys()).reduce(
+      (total, key) =>
+        total + (scannedByPart.get(key) || 0),
+      0,
+    ),
+  )
+  const incompletePartNumbers =
+    Array.from(expectedByPart.entries())
+      .filter(([key, item]) =>
+        (scannedByPart.get(key) || 0) + 0.0001 <
+          item.quantity,
+      )
+      .map(([, item]) => item.partNumber)
+
+  return {
+    complete:
+      expectedByPart.size > 0 &&
+      incompletePartNumbers.length === 0,
+    expectedQuantity,
+    scannedQuantity,
+    incompletePartNumbers,
   }
 }
 
