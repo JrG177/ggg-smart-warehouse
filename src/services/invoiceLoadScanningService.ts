@@ -66,6 +66,25 @@ function cleanScanCode(value: string) {
     .toUpperCase()
 }
 
+function splitConcatenatedPartQuantity(value: string) {
+  // Some TC57/DataWedge MultiBarcode profiles return the two Code128 values
+  // without the configured separator, for example `P500-001Q10|`. The old
+  // parser treated the entire string as the part number. Recover the two
+  // fields when the P token is immediately followed by a numeric Q token.
+  const match = value.match(
+    /^P(.+?)(Q\d+(?:[.:]\d+)?)(?=$|[A-Z]|\d)/,
+  )
+
+  if (!match) {
+    return [value]
+  }
+
+  const part = match[1].trim()
+  const quantity = match[2].trim()
+
+  return part ? [`P${part}`, quantity] : [value]
+}
+
 function splitScanPayload(value: string) {
   return value
     // DataWedge can separate MultiBarcode values with a printable separator
@@ -73,6 +92,7 @@ function splitScanPayload(value: string) {
     .split(/[|\r\n\t\u001d\u001e]+/)
     .map((token) => cleanScanCode(token))
     .filter(Boolean)
+    .flatMap(splitConcatenatedPartQuantity)
 }
 
 function normalizePartNumber(value: string) {
