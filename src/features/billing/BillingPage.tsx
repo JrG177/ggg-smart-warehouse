@@ -592,6 +592,7 @@ export function BillingPage() {
 
   const [quickInvoicePickerOpen, setQuickInvoicePickerOpen] = useState(false)
   const [quickScan, setQuickScan] = useState(false)
+  const [quickInvoiceSearch, setQuickInvoiceSearch] = useState('')
 
   const [
     invoiceViewerOpen,
@@ -2608,26 +2609,31 @@ const saveInvoiceChanges =
       )}
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900">
-        <div className="border-b border-slate-800 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-bold">Factura Rápida · UPS</h2>
-              <p className="mt-1 text-sm text-slate-400">Selecciona una factura UPS importada y escanea la parte P seguida de la cantidad Q de cada etiqueta.</p>
-            </div>
-            <button type="button" onClick={() => setQuickInvoicePickerOpen((open) => !open)} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white">
-              {quickInvoicePickerOpen ? 'Cerrar lista' : 'Abrir Factura Rápida'}
+        <div className="border-b border-slate-800 bg-blue-500/5 p-5">
+          <h2 className="text-xl font-bold">Factura Rápida · P y Q</h2>
+          <p className="mt-1 text-sm text-slate-400">Para etiquetas UPS: escanea P (parte), después Q (piezas). Un par P + Q verifica todas las piezas de esa etiqueta.</p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button type="button" onClick={() => setQuickInvoicePickerOpen((open) => !open)} className="min-h-12 rounded-xl bg-blue-600 px-5 py-2.5 text-base font-bold text-white">
+              {quickInvoicePickerOpen ? 'Ocultar facturas' : 'Elegir factura para escanear →'}
             </button>
+            <button type="button" onClick={() => openNewInvoice('csv')} className="min-h-12 rounded-xl border border-blue-500/40 px-4 py-2.5 text-sm font-bold text-blue-600 dark:text-blue-300">Importar otra factura</button>
           </div>
           {quickInvoicePickerOpen && (
-            <div className="mt-4 space-y-2">
-              {invoices.filter((invoice) => invoice.status === 'open' && /\bUPS\b/i.test(invoice.carrier) && getInvoiceImport(invoice)).length === 0 && (
-                <p className="text-sm text-slate-400">No hay facturas UPS abiertas con partidas importadas. Importa el CSV de UPS primero.</p>
-              )}
-              {invoices.filter((invoice) => invoice.status === 'open' && /\bUPS\b/i.test(invoice.carrier) && getInvoiceImport(invoice)).map((invoice) => (
-                <button key={invoice.id} type="button" onClick={() => { setQuickScan(true); setScanningInvoice(invoice); setQuickInvoicePickerOpen(false) }} className="flex w-full items-center justify-between rounded-xl border border-slate-700 px-4 py-3 text-left font-semibold hover:border-blue-400">
-                  <span>{invoice.invoice_number}</span><span className="text-xs text-blue-300">Escanear P → Q</span>
-                </button>
-              ))}
+            <div className="mt-5 rounded-2xl border border-blue-500/30 bg-slate-900 p-4">
+              <h3 className="font-bold">1. Elige la factura</h3>
+              <p className="mb-3 text-xs text-slate-400">Se muestran las facturas abiertas con partidas importadas. Revisa el transportista antes de escanear.</p>
+              <input value={quickInvoiceSearch} onChange={(event) => setQuickInvoiceSearch(event.target.value)} placeholder="Buscar número de factura o transportista" aria-label="Buscar factura rápida" className="mb-3 min-h-11 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-sm outline-none focus:border-blue-400" />
+              <div className="max-h-72 space-y-2 overflow-y-auto">
+                {invoices.filter((invoice) => invoice.status === 'open' && getInvoiceImport(invoice)?.invoice_import_lines?.length && `${invoice.invoice_number} ${invoice.carrier}`.toLowerCase().includes(quickInvoiceSearch.trim().toLowerCase())).length === 0 && (
+                  <p className="rounded-xl border border-slate-700 p-4 text-sm text-slate-400">No hay facturas abiertas que coincidan. Puedes importar una nueva arriba.</p>
+                )}
+                {invoices.filter((invoice) => invoice.status === 'open' && getInvoiceImport(invoice)?.invoice_import_lines?.length && `${invoice.invoice_number} ${invoice.carrier}`.toLowerCase().includes(quickInvoiceSearch.trim().toLowerCase())).sort((a, b) => Number(/\bUPS\b/i.test(b.carrier)) - Number(/\bUPS\b/i.test(a.carrier))).map((invoice) => (
+                  <button key={invoice.id} type="button" onClick={() => { setQuickScan(true); setScanningInvoice(invoice); setQuickInvoicePickerOpen(false) }} className="flex min-h-16 w-full items-center justify-between gap-3 rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-left hover:border-blue-400 focus-visible:outline-blue-400">
+                    <span><strong className="block text-base">{invoice.invoice_number}</strong><small className="text-slate-400">{invoice.carrier} · {getInvoiceImport(invoice)?.invoice_import_lines.length} partidas</small></span>
+                    <span className="shrink-0 text-sm font-bold text-blue-400">Escanear P → Q</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>

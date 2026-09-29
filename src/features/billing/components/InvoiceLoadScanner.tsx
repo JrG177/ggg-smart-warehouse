@@ -274,15 +274,10 @@ export function InvoiceLoadScanner({
         const quantityMatch = value.match(/^Q?(\d+(?:[.:]\d+)?)$/)
         if (quantityMatch && pending) {
           cleaned = `P${pending}|Q${quantityMatch[1]}`
-          pendingPartRef.current = null
-          setPendingPart(null)
         } else if (value.startsWith('Q') && !pending) {
           setError('Primero escanea la Parte de esta label; después su Cantidad.')
           return
         }
-      } else if (values.length > 1) {
-        pendingPartRef.current = null
-        setPendingPart(null)
       }
 
       if (busyRef.current) {
@@ -331,6 +326,10 @@ export function InvoiceLoadScanner({
 
         setLatestOutcome(outcome)
         notifyResult(outcome.scan.result)
+        if (outcome.scan.result === 'accepted') {
+          pendingPartRef.current = null
+          setPendingPart(null)
+        }
         await loadScans()
       } catch (scanError) {
         setError(
@@ -866,6 +865,18 @@ export function InvoiceLoadScanner({
 
       <main className="mx-auto grid max-w-6xl gap-5 p-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
         <section className="space-y-4">
+          {mode === 'quick' && (
+            <div className="grid grid-cols-2 gap-3" aria-live="polite">
+              <div className={`rounded-2xl border-2 p-4 ${pendingPart ? 'border-emerald-400 bg-emerald-500/20' : 'border-blue-400 bg-blue-500/20'}`}>
+                <p className="text-xs font-bold uppercase tracking-wide">Paso 1 · Parte P</p>
+                <p className="mt-2 text-xl font-black">{pendingPart || 'Escanea P'}</p>
+              </div>
+              <div className={`rounded-2xl border-2 p-4 ${pendingPart ? 'border-amber-400 bg-amber-500/20' : 'border-slate-700 bg-slate-900'}`}>
+                <p className="text-xs font-bold uppercase tracking-wide">Paso 2 · Cantidad Q</p>
+                <p className="mt-2 text-xl font-black">{pendingPart ? 'Escanea Q ahora' : 'Esperando P'}</p>
+              </div>
+            </div>
+          )}
           <div className="rounded-2xl border-2 border-emerald-500/60 bg-emerald-500/10 p-4 shadow-lg shadow-emerald-950/30">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -874,8 +885,8 @@ export function InvoiceLoadScanner({
                   TC57 listo
                 </p>
                 <p className="mt-1 text-sm text-slate-300">
-                  {mode === 'quick'
-                    ? 'Escanea el código P de la etiqueta y después el código Q. Al recibir Q, se registran todas las piezas indicadas en esa etiqueta. No necesitas cámara ni presionar Enter.'
+                {mode === 'quick'
+                  ? 'Usa el gatillo del TC57. Primero P y luego Q de la misma etiqueta. La cantidad solo se registra cuando ambos códigos coinciden con la factura.'
                     : 'Presiona y sostén un gatillo para leer Parte + Cantidad de la label. Una lectura de Parte sola no sumará piezas cuando todavía falte la cantidad. No necesitas abrir la cámara ni presionar Enter.'}
                 </p>
               </div>
@@ -927,7 +938,7 @@ export function InvoiceLoadScanner({
 
             {pendingPart && (
               <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-amber-500/50 bg-amber-950/40 px-3 py-2 text-sm font-semibold text-amber-200">
-                <span>Parte {pendingPart} lista. Escanea Q de esa misma etiqueta; todavía no se agregaron piezas.</span>
+                <span>Parte {pendingPart} lista. Escanea Q de esa misma etiqueta; todavía no se agregaron piezas. Si Q falla, puedes volver a escanearla.</span>
                 <button type="button" onClick={() => { pendingPartRef.current = null; setPendingPart(null); setError('') }} className="shrink-0 rounded-lg border border-amber-400/50 px-2 py-1">Cancelar</button>
               </div>
             )}
