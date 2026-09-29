@@ -38,6 +38,7 @@ type InvoiceLoadScannerProps = {
   invoiceNumber: string
   expectedLines: ExpectedInvoiceLine[]
   onClose: () => void
+  mode?: 'standard' | 'quick'
 }
 
 type ScanSource = 'hardware' | 'camera' | 'manual'
@@ -148,6 +149,7 @@ export function InvoiceLoadScanner({
   invoiceNumber,
   expectedLines,
   onClose,
+  mode = 'standard',
 }: InvoiceLoadScannerProps) {
   const videoRef =
     useRef<HTMLVideoElement | null>(null)
@@ -182,6 +184,7 @@ export function InvoiceLoadScanner({
     value: '',
     time: 0,
   })
+  const pendingPartRef = useRef<string | null>(null)
 
   const [scans, setScans] =
     useState<InvoiceLoadScan[]>([])
@@ -204,6 +207,13 @@ export function InvoiceLoadScanner({
     useState('')
   const [manualCode, setManualCode] =
     useState('')
+  const [pendingPart, setPendingPart] =
+    useState<string | null>(null)
+
+  useEffect(() => {
+    pendingPartRef.current = null
+    setPendingPart(null)
+  }, [invoiceId])
 
   const loadScans = useCallback(async () => {
     const rows = await getInvoiceLoadScans(
@@ -229,10 +239,50 @@ export function InvoiceLoadScanner({
       rawCode: string,
       source: ScanSource = 'manual',
     ) => {
-      const cleaned = cleanCode(rawCode)
+      // Keep DataWedge's separators until the service has split the label.
+      let cleaned = rawCode.trim()
 
       if (!cleaned) {
         return
+      }
+
+      const values = cleaned
+        .split(/[|\r\n\t\u001d\u001e]+/)
+        .map(cleanCode)
+        .filter(Boolean)
+
+      if (source !== 'camera' && values.length === 1) {
+        const value = values[0]
+        const candidate = value.startsWith('P')
+          ? value.slice(1)
+          : value
+        const matchingLine = expectedLines.find(
+          (line) => normalizePartNumber(line.part_number) ===
+            normalizePartNumber(candidate),
+        )
+
+        if (matchingLine) {
+          const part = matchingLine.part_number.trim().toUpperCase()
+          pendingPartRef.current = part
+          setPendingPart(part)
+          setLatestOutcome(null)
+          setError('')
+          return
+        }
+
+        const pending = pendingPartRef.current
+        const quantityMatch = value.match(/^Q?(\d+(?:[.:]\d+)?)$/)
+        if (quantityMatch && pending) {
+          cleaned = `P${pending}|Q${quantityMatch[1]}`
+          pendingPartRef.current = null
+          setPendingPart(null)
+        } else if (value.startsWith('Q') && !pending) {
+          setError('Primero escanea la Parte de esta label; después su Cantidad.')
+          return
+        }
+      } else if (values.length > 1) {
+        pendingPartRef.current = null
+        setPendingPart(null)
       }
 
       if (busyRef.current) {
@@ -310,7 +360,7 @@ export function InvoiceLoadScanner({
         }
       }
     },
-    [cameraEnabled, invoiceId, loadScans],
+    [cameraEnabled, expectedLines, invoiceId, loadScans],
   )
 
   useEffect(() => {
@@ -520,7 +570,7 @@ export function InvoiceLoadScanner({
       hardwareIdleTimerRef.current = null
     }
 
-    const value = cleanCode(rawValue)
+    const value = rawValue.trim()
     setHardwareCode('')
 
     if (value) {
@@ -790,13 +840,13 @@ export function InvoiceLoadScanner({
       className="fixed inset-0 z-[180] overflow-y-auto bg-slate-950 text-white"
       role="dialog"
       aria-modal="true"
-      aria-label={`Agregar números de parte ${invoiceNumber}`}
+      aria-label={`${mode === 'quick' ? 'Factura Rápida' : 'Agregar números de parte'} ${invoiceNumber}`}
     >
       <header className="sticky top-0 z-20 border-b border-slate-800 bg-slate-950/95 px-4 py-3 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase text-emerald-400">
-              Agregar números de parte
+              {mode === 'quick' ? 'Factura Rápida · UPS' : 'Agregar números de parte'}
             </p>
             <h2 className="text-xl font-bold">
               {invoiceNumber}
@@ -824,7 +874,9 @@ export function InvoiceLoadScanner({
                   TC57 listo
                 </p>
                 <p className="mt-1 text-sm text-slate-300">
-                  Presiona y sostén un gatillo para leer Parte + Cantidad de la label. Una lectura de Parte sola no sumará piezas cuando todavía falte la cantidad. No necesitas abrir la cámara ni presionar Enter.
+                  {mode === 'quick'
+                    ? 'Escanea el código P de la etiqueta y después el código Q. Al recibir Q, se registran todas las piezas indicadas en esa etiqueta. No necesitas cámara ni presionar Enter.'
+                    : 'Presiona y sostén un gatillo para leer Parte + Cantidad de la label. Una lectura de Parte sola no sumará piezas cuando todavía falte la cantidad. No necesitas abrir la cámara ni presionar Enter.'}
                 </p>
               </div>
 
@@ -873,18 +925,27 @@ export function InvoiceLoadScanner({
               className="mt-4 min-h-14 w-full rounded-xl border border-emerald-500/50 bg-slate-950 px-4 text-lg font-bold uppercase tracking-wide text-white outline-none focus:border-emerald-300"
             />
 
+            {pendingPart && (
+              <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-amber-500/50 bg-amber-950/40 px-3 py-2 text-sm font-semibold text-amber-200">
+                <span>Parte {pendingPart} lista. Escanea Q de esa misma etiqueta; todavía no se agregaron piezas.</span>
+                <button type="button" onClick={() => { pendingPartRef.current = null; setPendingPart(null); setError('') }} className="shrink-0 rounded-lg border border-amber-400/50 px-2 py-1">Cancelar</button>
+              </div>
+            )}
+
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs text-slate-400">
-                MultiBarcode usa el separador |. Apunta a Parte y Cantidad sin soltar el gatillo; el orden no importa.
+                {mode === 'quick'
+                  ? 'Paso 1: P (parte). Paso 2: Q (cantidad). Si ambos llegan juntos, también se procesan en una lectura.'
+                  : 'MultiBarcode usa el separador |. Apunta a Parte y Cantidad sin soltar el gatillo; el orden no importa.'}
               </p>
-              <button
+              {mode !== 'quick' && <button
                 type="button"
                 onClick={toggleCamera}
                 className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-700 px-3 text-sm font-semibold text-slate-300"
               >
                 <Camera size={17} />
                 {cameraEnabled ? 'Cerrar cámara' : 'Usar cámara de respaldo'}
-              </button>
+              </button>}
             </div>
           </div>
 
@@ -923,7 +984,9 @@ export function InvoiceLoadScanner({
                   className="mt-0.5 shrink-0 text-emerald-400"
                   size={19}
                 />
-                Escanea la label completa. El sistema debe recibir el número de parte y la cantidad en la misma lectura.
+                {mode === 'quick'
+                  ? 'La factura se verifica con P y Q de la misma etiqueta. P solo espera a Q y no suma piezas.'
+                  : 'Escanea la label completa. El sistema debe recibir el número de parte y la cantidad en la misma lectura.'}
               </p>
 
               <form

@@ -590,6 +590,9 @@ export function BillingPage() {
     setScanningInvoice,
   ] = useState<Invoice | null>(null)
 
+  const [quickInvoicePickerOpen, setQuickInvoicePickerOpen] = useState(false)
+  const [quickScan, setQuickScan] = useState(false)
+
   const [
     invoiceViewerOpen,
     setInvoiceViewerOpen,
@@ -2605,6 +2608,29 @@ const saveInvoiceChanges =
       )}
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900">
+        <div className="border-b border-slate-800 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold">Factura Rápida · UPS</h2>
+              <p className="mt-1 text-sm text-slate-400">Selecciona una factura UPS importada y escanea la parte P seguida de la cantidad Q de cada etiqueta.</p>
+            </div>
+            <button type="button" onClick={() => setQuickInvoicePickerOpen((open) => !open)} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white">
+              {quickInvoicePickerOpen ? 'Cerrar lista' : 'Abrir Factura Rápida'}
+            </button>
+          </div>
+          {quickInvoicePickerOpen && (
+            <div className="mt-4 space-y-2">
+              {invoices.filter((invoice) => invoice.status === 'open' && /\bUPS\b/i.test(invoice.carrier) && getInvoiceImport(invoice)).length === 0 && (
+                <p className="text-sm text-slate-400">No hay facturas UPS abiertas con partidas importadas. Importa el CSV de UPS primero.</p>
+              )}
+              {invoices.filter((invoice) => invoice.status === 'open' && /\bUPS\b/i.test(invoice.carrier) && getInvoiceImport(invoice)).map((invoice) => (
+                <button key={invoice.id} type="button" onClick={() => { setQuickScan(true); setScanningInvoice(invoice); setQuickInvoicePickerOpen(false) }} className="flex w-full items-center justify-between rounded-xl border border-slate-700 px-4 py-3 text-left font-semibold hover:border-blue-400">
+                  <span>{invoice.invoice_number}</span><span className="text-xs text-blue-300">Escanear P → Q</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="flex flex-col gap-4 border-b border-slate-800 p-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex gap-2">
             <button
@@ -3012,7 +3038,7 @@ const saveInvoiceChanges =
                           <button
                             type="button"
                             onClick={() =>
-                              setScanningInvoice(invoice)
+                              { setQuickScan(false); setScanningInvoice(invoice) }
                             }
                             className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950"
                           >
@@ -4298,6 +4324,7 @@ const saveInvoiceChanges =
         <InvoiceLoadScanner
           invoiceId={scanningInvoice.id}
           invoiceNumber={scanningInvoice.invoice_number}
+          mode={quickScan ? 'quick' : 'standard'}
           expectedLines={
             getInvoiceImport(scanningInvoice)
               ?.invoice_import_lines || []
