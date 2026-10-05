@@ -59,3 +59,15 @@ assert.equal(data.invoices[0].boxIds[0], data.boxes[0].id)
 data.boxes.push({ ...data.boxes[0], id: 'duplicate' })
 rejects({ type: 'cleanTrackings' }, /dos registros/)
 console.log('UPS: ejemplos reales, concatenación, lecturas ambiguas, duplicados y corrección de datos antiguos verificados.')
+
+// Paired reception must save tracking and sticker together, or save neither.
+const pairedBase = emptyA1Data()
+const paired = applyA1Action(pairedBase, { type: 'receive', tracking: '4207884000001Z9293810306974936', date: '2026-10-05', number: 'A1-000135' }, 'paired-1', '2026-10-05T16:00:00Z').data
+assert.equal(paired.boxes[0].tracking, '1Z9293810306974936')
+assert.equal(paired.boxes[0].number, '135')
+const pairedBefore = JSON.stringify(paired)
+assert.throws(() => applyA1Action(paired, { type: 'receive', tracking: '1ZE6E2730392498822', date: '2026-10-05', number: '000135' }, 'paired-2', 'now'), /otra caja/)
+assert.equal(JSON.stringify(paired), pairedBefore)
+assert.throws(() => applyA1Action(pairedBase, { type: 'receive', tracking: '1ZE6E2730392498822', date: '2026-10-05', number: 'BAD-STICKER' }, 'paired-3', 'now'))
+assert.equal(pairedBase.boxes.length, 0)
+console.log('Recepción continua: guardado conjunto, sticker inválido y duplicado sin registros parciales verificados.')

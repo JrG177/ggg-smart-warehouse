@@ -45,3 +45,9 @@
 .a1-photo { width: 100px; height: 90px; object-fit: contain; margin: 8px 0; border-radius: 8px; }
 @media (min-width: 1024px) { .a1-tabs { top: 0; } }
 @media (max-width: 380px) { .a1-section, .a1-panel { padding: 10px; } .a1-box { gap: 6px; padding: 9px; } .a1-box-actions { flex-basis: 82px; } }
+
+.a1-session { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px; border-radius: 9px; background: var(--ggg-card-soft); }
+.a1-session span { font-weight: 700; }
+.a1-pending { padding: 12px; border: 2px solid #3989e7; border-radius: 9px; }
+.a1-flow-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.a1-last { margin-top: 12px; border-left: 4px solid #22a45b; padding-left: 10px; }

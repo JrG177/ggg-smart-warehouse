@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { A1_STORAGE_KEY, boxInvoice, emptyA1Data, readA1Data, saveA1Action } from './a1TrialStore'
+import { A1_STORAGE_KEY, boxInvoice, emptyA1Data, readA1Data, saveA1Action, normalizeTracking } from './a1TrialStore'
 import type { A1Action, A1Box, A1Data } from './a1TrialStore'
 import './a1.css'
 
@@ -32,6 +32,12 @@ export function A1Page() {
   const [tab, setTab] = useState<'receiving' | 'inventory' | 'invoices'>('receiving')
   const [date, setDate] = useState(today)
   const [tracking, setTracking] = useState('')
+  const [receivingMode, setReceivingMode] = useState<'paired' | 'tracking'>('paired')
+  const [pendingTracking, setPendingTracking] = useState('')
+  const pendingRawTracking = useRef('')
+  const [manualEntry, setManualEntry] = useState(false)
+  const [sessionCount, setSessionCount] = useState(0)
+  const [lastReceivedId, setLastReceivedId] = useState('')
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('inWarehouse')
   const [editing, setEditing] = useState<A1Box | null>(null)
@@ -70,11 +76,37 @@ export function A1Page() {
       return null
     }
   }
+  function focusReceiving() {
+    requestAnimationFrame(() => trackingInput.current?.focus())
+  }
+  function resetReceiving() {
+    setPendingTracking(''); pendingRawTracking.current = ''; setTracking('');
+    setError(''); setNotice(''); focusReceiving()
+  }
   function receive(event: FormEvent) {
     event.preventDefault()
-    commit({ type: 'receive', tracking, date })
+    if (!tracking.trim()) return
+    if (receivingMode === 'paired' && !pendingTracking) {
+      try {
+        const canonical = normalizeTracking(tracking)
+        // Check current storage before asking for a sticker; no box is saved yet.
+        if (readA1Data().boxes.some(box => normalizeTracking(box.tracking) === canonical)) {
+          throw new Error(`Tracking ${canonical} ya recibido. No se duplicó; continúa con otra caja.`)
+        }
+        pendingRawTracking.current = tracking
+        setPendingTracking(canonical); setError(''); setNotice('Tracking leído. Escanea el sticker de esta caja.')
+      } catch (err) { setError(messageOf(err)); setNotice('') }
+      setTracking(''); focusReceiving(); return
+    }
+    const result = commit({ type: 'receive', tracking: pendingTracking ? pendingRawTracking.current : tracking, date, number: pendingTracking ? tracking : undefined })
     setTracking('')
-    trackingInput.current?.focus()
+    if (result) {
+      setLastReceivedId(result.boxes.at(-1)!.id)
+      setSessionCount(count => count + 1)
+      setPendingTracking(''); pendingRawTracking.current = ''
+      setNotice('✓ Caja guardada. Escanea el tracking de la siguiente caja.')
+    }
+    focusReceiving()
   }
   function createInvoice(event: FormEvent) {
     event.preventDefault()
@@ -108,7 +140,7 @@ export function A1Page() {
       <div className="a1-box-body">
         <strong>{box.number ? `Caja ${box.number}` : 'Sin sticker'}</strong>
         <div className="a1-code">{box.tracking}</div>
-        <small>Entrada: {box.receivedDate} · {box.location || 'Ubicación sin asignar'}</small>
+        <small>Entrada: {box.receivedDate}</small>
         <div className="a1-status">{invoice?.departedAt ? 'Salió' : invoice ? 'Asignada' : 'En bodega'}{invoice && ` · ${invoice.number}`}</div>
         {box.note && <p>{box.note}</p>}
         {box.photo && <a href={box.photo} target="_blank" rel="noreferrer"><img className="a1-photo" src={box.photo} alt={`Evidencia de caja ${box.number || box.tracking}`} /></a>}
@@ -123,7 +155,7 @@ export function A1Page() {
   const dayBoxes = data.boxes.filter(box => box.receivedDate === date).toReversed()
   const shownBoxes = data.boxes.filter(box => {
     const invoice = boxInvoice(data, box.id)
-    const matches = `${box.tracking} ${box.number} ${box.location}`.toUpperCase().includes(search.trim().toUpperCase())
+    const matches = `${box.tracking} ${box.number}`.toUpperCase().includes(search.trim().toUpperCase())
     return matches && (filter === 'all' || (filter === 'inWarehouse' && !invoice?.departedAt) || (filter === 'noms' && box.noms) || (filter === 'osd' && !!box.osd) || (filter === 'departed' && !!invoice?.departedAt))
   }).toReversed()
   const activeInvoice = data.invoices.find(invoice => invoice.id === activeInvoiceId)
@@ -138,23 +170,28 @@ export function A1Page() {
     {notice && <div className="a1-success" role="status">{notice}</div>}
 
     {tab === 'receiving' && <section className="a1-section">
-      <h2>Recepción del día</h2>
+      <h2>Recepción continua</h2>
+      <div className="a1-session" role="status"><strong>{sessionCount} cajas recibidas en esta sesión</strong><span>{pendingTracking ? 'Paso 2 · Sticker' : 'Paso 1 · Tracking'}</span></div>
       <form onSubmit={receive} className="a1-form">
-        <label>Fecha de recepción<input type="date" required value={date} onChange={event => setDate(event.target.value)} /></label>
-        <label>Escanear tracking<input ref={trackingInput} autoFocus value={tracking} onChange={event => setTracking(event.target.value)} placeholder="Listo para el lector del TC" autoComplete="off" autoCapitalize="characters" /></label>
-        <button className="a1-primary" disabled={!tracking.trim() || !date}>Agregar tracking</button>
+        <label>Fecha de recepción<input type="date" required value={date} disabled={!!pendingTracking} onChange={event => setDate(event.target.value)} /></label>
+        <label>Modo<select value={receivingMode} disabled={!!pendingTracking} onChange={event => { setReceivingMode(event.target.value as 'paired' | 'tracking'); resetReceiving() }}><option value="paired">Tracking + sticker</option><option value="tracking">Solo trackings</option></select></label>
+        {pendingTracking && <div className="a1-pending">Tracking de esta caja<div className="a1-code">{pendingTracking}</div><small>Aún no guardado. Lee su sticker para completar.</small></div>}
+        <label>{pendingTracking ? 'Escanear sticker' : 'Escanear tracking'}<input ref={trackingInput} autoFocus inputMode={manualEntry ? 'text' : 'none'} value={tracking} onChange={event => setTracking(event.target.value)} placeholder={pendingTracking ? '000135 o A1-000135' : 'Listo para la siguiente caja'} autoComplete="off" autoCapitalize="characters" /></label>
+        <button className="a1-primary" disabled={!tracking.trim() || !date}>{pendingTracking ? 'Guardar caja y continuar' : receivingMode === 'paired' ? 'Continuar al sticker' : 'Agregar tracking'}</button>
+        <div className="a1-flow-actions"><button type="button" onClick={() => { setManualEntry(value => !value); focusReceiving() }}>{manualEntry ? 'Usar lector' : 'Escribir manualmente'}</button>{pendingTracking && <button type="button" onClick={resetReceiving}>Cancelar esta caja</button>}</div>
       </form>
-      <p className="a1-help">El lector envía el tracking y Enter para guardarlo. También puedes escribirlo y pulsar Agregar tracking.</p>
+      <p className="a1-help">Con Enter al final de cada lectura, el TC avanza y guarda sin tocar botones. Solo trackings guarda en una lectura; tracking + sticker guarda al leer el sticker. Un error no agrega cajas.</p>
+      {lastReceivedId && data.boxes.find(box => box.id === lastReceivedId) && <div className="a1-last"><strong>Última caja guardada</strong>{boxCard(data.boxes.find(box => box.id === lastReceivedId)!)}<button type="button" onClick={() => setEditing({ ...data.boxes.find(box => box.id === lastReceivedId)! })}>Marcar incidencia / editar</button></div>}
       <h3>{dayBoxes.length} caja(s) · {date}</h3>
       {!dayBoxes.length && <p>Aún no hay trackings para esta fecha.</p>}
-      {dayBoxes.map(boxCard)}
+      <details><summary>Ver cajas del día ({dayBoxes.length})</summary>{dayBoxes.map(boxCard)}</details>
     </section>}
 
     {tab === 'inventory' && <section className="a1-section">
       <h2>Inventario A1</h2>
       <button type="button" onClick={() => commit({ type: 'cleanTrackings' })}>Corregir trackings guardados</button>
       <p className="a1-help">Separa los trackings UPS de los códigos adicionales. Conserva cajas y facturas; si hay duplicados, avisa antes de cambiar datos.</p>
-      <label>Buscar<input value={search} onChange={event => setSearch(event.target.value)} placeholder="Tracking, número de caja o ubicación" /></label>
+      <label>Buscar<input value={search} onChange={event => setSearch(event.target.value)} placeholder="Tracking o número de caja" /></label>
       <label>Mostrar<select value={filter} onChange={event => setFilter(event.target.value)}><option value="inWarehouse">En bodega (incluye asignadas)</option><option value="all">Todas</option><option value="noms">NOMS</option><option value="osd">OS&amp;D</option><option value="departed">Salieron</option></select></label>
       <h3>{shownBoxes.length} caja(s)</h3>
       {!shownBoxes.length && <p>No hay cajas con estos filtros.</p>}
@@ -198,7 +235,6 @@ export function A1Page() {
       <form className="a1-form" onSubmit={event => { event.preventDefault(); const { id, tracking: unusedTracking, ...changes } = editing; void unusedTracking; if (commit({ type: 'edit', id, changes })) setEditing(null) }}>
         <label>Número del sticker<input ref={stickerInput} autoFocus value={editing.number} onChange={event => setEditing({ ...editing, number: event.target.value })} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); stickerInput.current?.blur() } }} placeholder="000135 o A1-000135" autoComplete="off" /></label>
         <label>Fecha de recepción<input type="date" required value={editing.receivedDate} onChange={event => setEditing({ ...editing, receivedDate: event.target.value })} /></label>
-        <label>Ubicación<input value={editing.location} onChange={event => setEditing({ ...editing, location: event.target.value })} placeholder="Rack / nivel / zona" /></label>
         <label className="a1-check"><input type="checkbox" checked={editing.noms} onChange={event => setEditing({ ...editing, noms: event.target.checked })} />NOMS</label>
         <label>OS&amp;D<select value={editing.osd} onChange={event => setEditing({ ...editing, osd: event.target.value as A1Box['osd'] })}><option value="">Sin marca OS&amp;D</option><option>Sobrante</option><option>Faltante</option><option>Daño</option></select></label>
         <label>Observaciones<textarea value={editing.note} required={!!editing.osd} onChange={event => setEditing({ ...editing, note: event.target.value })} /></label>

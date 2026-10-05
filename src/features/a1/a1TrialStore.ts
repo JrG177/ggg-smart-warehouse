@@ -27,7 +27,7 @@ export interface A1Data {
 }
 export type A1Action =
   | { type: 'cleanTrackings' }
-  | { type: 'receive'; tracking: string; date: string }
+  | { type: 'receive'; tracking: string; date: string; number?: string }
   | { type: 'edit'; id: string; changes: Omit<A1Box, 'id' | 'tracking'> }
   | { type: 'createInvoice'; number: string; loadedIn: string }
   | { type: 'assign'; invoiceId: string; code: string }
@@ -103,7 +103,9 @@ export function applyA1Action(data: A1Data, action: A1Action, id: string, at: st
     }
     const existing = next.boxes.find(box => storedTracking(box) === tracking)
     if (existing) throw new Error(`Tracking ya recibido el ${existing.receivedDate}. Caja ${existing.number || 'sin sticker'}. No se duplicó.`)
-    next.boxes.push({ id, tracking, originalTracking: action.tracking.trim() !== tracking ? action.tracking.trim() : undefined, number: '', receivedDate: date, location: '', noms: false, osd: '', note: '', photo: '' })
+    const number = action.number?.trim() ? normalizeBoxNumber(action.number) : ''
+    if (number && next.boxes.some(box => box.number === number)) throw new Error(`El número ${number} ya pertenece a otra caja; no se puede reutilizar.`)
+    next.boxes.push({ id, tracking, originalTracking: action.tracking.trim() !== tracking ? action.tracking.trim() : undefined, number, receivedDate: date, location: '', noms: false, osd: '', note: '', photo: '' })
     message = `Tracking ${tracking} guardado.`
   } else if (action.type === 'edit') {
     const box = next.boxes.find(item => item.id === action.id)
