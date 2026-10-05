@@ -1,3 +1,4 @@
+import { A1Page } from './features/a1/A1Page'
 import {
   BrowserRouter,
   Navigate,
@@ -143,6 +144,8 @@ function App() {
             path="/operations/receiving/:id"
             element={<ReceptionDetailPage />}
           />
+
+          <Route path="/a1" element={<A1Page />} />
 
           <Route
             path="/shipments"

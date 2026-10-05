@@ -1,0 +1,47 @@
+.a1-page { width: 100%; max-width: 960px; min-width: 0; margin: auto; color: var(--ggg-text); overflow-wrap: anywhere; }
+.a1-page * { box-sizing: border-box; min-width: 0; }
+.a1-page h1 { font-size: 1.7rem; font-weight: 750; }
+.a1-page h2 { font-size: 1.3rem; font-weight: 700; margin-bottom: 12px; }
+.a1-page h3 { font-weight: 700; margin: 14px 0 8px; }
+.a1-page p { margin: 6px 0; }
+.a1-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+.a1-page button { min-height: 44px; padding: 10px 14px; border: 1px solid var(--ggg-border-strong); border-radius: 9px; font-weight: 650; background: var(--ggg-card); cursor: pointer; white-space: normal; }
+.a1-page button:disabled { opacity: .5; cursor: not-allowed; }
+.a1-page button:focus-visible, .a1-page input:focus-visible, .a1-page select:focus-visible, .a1-page textarea:focus-visible { outline: 3px solid #3989e7; outline-offset: 2px; }
+.a1-page .a1-primary { background: #145ab8; color: white; border-color: #145ab8; width: 100%; }
+.a1-trial { margin: 14px 0; padding: 12px; background: var(--ggg-card-soft); border: 1px solid var(--ggg-border); border-radius: 10px; font-size: .85rem; }
+.a1-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-bottom: 14px; position: sticky; top: 86px; z-index: 5; background: var(--ggg-page); padding: 4px 0; }
+.a1-tabs button { padding-inline: 3px; font-size: .85rem; }
+.a1-tabs [aria-current] { background: #145ab8; color: white; }
+.a1-section, .a1-panel { margin: 12px 0; padding: 16px; border: 1px solid var(--ggg-border); border-radius: 12px; background: var(--ggg-card); }
+.a1-panel summary { min-height: 40px; cursor: pointer; font-weight: 700; }
+.a1-form { display: grid; gap: 12px; }
+.a1-page label { display: block; font-weight: 650; margin: 10px 0; }
+.a1-page input:not([type=checkbox]), .a1-page select, .a1-page textarea { display: block; width: 100%; max-width: 100%; min-height: 46px; padding: 10px; font-size: 16px; border-radius: 8px; border: 1px solid var(--ggg-border-strong); color: var(--ggg-text); background: var(--ggg-input); margin-top: 5px; }
+.a1-page textarea { min-height: 80px; }
+.a1-help, .a1-page small { font-size: .85rem; color: var(--ggg-text-secondary); }
+.a1-box { display: flex; gap: 12px; border: 1px solid var(--ggg-border); border-radius: 10px; padding: 12px; margin-top: 10px; }
+.a1-box-body { flex: 1; }
+.a1-box-actions { display: flex; flex-direction: column; gap: 5px; flex: 0 0 100px; }
+.a1-box-actions button { padding: 6px; font-size: .75rem; }
+.a1-code { font-family: ui-monospace, monospace; overflow-wrap: anywhere; word-break: break-word; margin: 4px 0; }
+.a1-status { font-weight: 650; font-size: .8rem; margin-top: 6px; }
+.a1-page .a1-mark-active { background: #ffe4a4; color: #664600; }
+.a1-page .a1-mark-danger { background: #ffe1e1; color: #982323; }
+.a1-error, .a1-success, .a1-review { margin: 12px 0; border-radius: 10px; padding: 12px; }
+.a1-error { background: #ffe7e7; color: #8a1717; border: 1px solid #ecb8b8; }
+.a1-success { background: #dcfce7; color: #14532d; border: 1px solid #a6dfb9; }
+.a1-review { background: var(--ggg-card-soft); border: 1px solid var(--ggg-border-strong); }
+.a1-review button { margin-top: 10px; }
+.a1-prefix { display: flex; gap: 8px; align-items: center; }
+.a1-prefix span { padding: 10px 0; }
+.a1-prefix input { flex: 1; }
+.a1-assigned { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--ggg-border); }
+.a1-overlay { position: fixed; inset: 0; z-index: 60; background: #0009; display: flex; align-items: center; justify-content: center; padding: 12px; }
+.a1-dialog { width: 100%; max-width: 520px; max-height: 90dvh; overflow-y: auto; overflow-x: hidden; background: var(--ggg-card); border-radius: 12px; padding: 18px; }
+.a1-dialog-buttons { display: flex; gap: 10px; position: sticky; bottom: -18px; background: var(--ggg-card); padding: 12px 0; }
+.a1-page .a1-check { display: flex; align-items: center; gap: 10px; }
+.a1-check input { width: 22px; height: 22px; }
+.a1-photo { width: 100px; height: 90px; object-fit: contain; margin: 8px 0; border-radius: 8px; }
+@media (min-width: 1024px) { .a1-tabs { top: 0; } }
+@media (max-width: 380px) { .a1-section, .a1-panel { padding: 10px; } .a1-box { gap: 6px; padding: 9px; } .a1-box-actions { flex-basis: 82px; } }

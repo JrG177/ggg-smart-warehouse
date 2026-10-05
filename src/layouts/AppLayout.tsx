@@ -22,6 +22,7 @@ import {
 
 const navigation = [
   { name: 'Operación', path: '/operations', icon: Workflow },
+  { name: 'A1 · Prueba', path: '/a1', icon: Truck },
   { name: 'Embarques', path: '/shipments', icon: Truck },
   { name: 'Ubicaciones', path: '/locations', icon: MapPinned },
   { name: 'Reportes', path: '/reports', icon: ChartNoAxesCombined },
