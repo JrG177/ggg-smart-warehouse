@@ -100,7 +100,7 @@ export function InvoiceCsvImportSection({
 
         <p className="mt-2 text-sm text-slate-400">
           En Excel usa “Guardar como” y selecciona CSV UTF-8. El sistema validará
-          cantidades, peso, bultos y valor antes de permitir guardar.
+          cantidades, peso y valor antes de permitir guardar. Los bultos se capturan al completar la factura.
         </p>
       </div>
 
@@ -156,7 +156,7 @@ export function InvoiceCsvImportSection({
             <Summary label="Factura" value={data.invoiceNumber} />
             <Summary label="Partidas" value={String(data.lines.length)} />
             <Summary label="Unidades" value={formatNumber(data.totalQuantity)} />
-            <Summary label="Bultos" value={formatNumber(data.packageCount)} />
+            <Summary label="Bultos" value="Al completar" />
             <Summary
               label="Valor"
               value={formatCurrency(data.invoiceTotal, data.currency)}

@@ -1,5 +1,8 @@
-import { InvoiceUxTrialPage } from './features/trials/InvoiceUxTrialPage'
-import { A1Page } from './features/a1/A1Page'
+import { lazy, Suspense } from 'react'
+const InvoiceUxTrialPage = import.meta.env.DEV
+  ? lazy(() => import('./features/trials/InvoiceUxTrialPage').then(module => ({ default: module.InvoiceUxTrialPage })))
+  : () => null
+const A1Page = lazy(() => import('./features/a1/A1Page').then(module => ({ default: module.A1Page })))
 import {
   BrowserRouter,
   Navigate,
@@ -15,53 +18,37 @@ import {
   OperationsLayout,
 } from './layouts/OperationsLayout'
 
-import {
-  NewReceivingPage,
-} from './features/receiving/NewReceivingPage'
+const NewReceivingPage = lazy(() => import('./features/receiving/NewReceivingPage').then(module => ({ default: module.NewReceivingPage })))
 
-import {
-  ReceptionDetailPage,
-} from './features/receiving/ReceptionDetailPage'
+const ReceptionDetailPage = lazy(() => import('./features/receiving/ReceptionDetailPage').then(module => ({ default: module.ReceptionDetailPage })))
 
-import {
-  QuickReceivingPage,
-} from './features/receiving/QuickReceivingPage'
+const QuickReceivingPage = lazy(() => import('./features/receiving/QuickReceivingPage').then(module => ({ default: module.QuickReceivingPage })))
 
-import {
-  QuickReceivingHistoryPage,
-} from './features/receiving/QuickReceivingHistoryPage'
+const QuickReceivingHistoryPage = lazy(() => import('./features/receiving/QuickReceivingHistoryPage').then(module => ({ default: module.QuickReceivingHistoryPage })))
 
-import {
-  MaterialPage,
-} from './features/material/MaterialPage'
+const MaterialPage = lazy(() => import('./features/material/MaterialPage').then(module => ({ default: module.MaterialPage })))
 
-import {
-  BillingPage,
-} from './features/billing/BillingPage'
+const BillingPage = lazy(() => import('./features/billing/BillingPage').then(module => ({ default: module.BillingPage })))
 
-import {
-  LocationsPage,
-} from './features/locations/LocationsPage'
+const LocationsPage = lazy(() => import('./features/locations/LocationsPage').then(module => ({ default: module.LocationsPage })))
 
-import {
-  ShipmentsPage,
-} from './features/shipments/ShipmentsPage'
+const ShipmentsPage = lazy(() => import('./features/shipments/ShipmentsPage').then(module => ({ default: module.ShipmentsPage })))
 
-import {
-  DiscrepanciesPage,
-} from './features/discrepancies/DiscrepanciesPage'
+const DiscrepanciesPage = lazy(() => import('./features/discrepancies/DiscrepanciesPage').then(module => ({ default: module.DiscrepanciesPage })))
 
-import {
-  ReportsPage,
-} from './features/reports/ReportsPage'
+const ReportsPage = lazy(() => import('./features/reports/ReportsPage').then(module => ({ default: module.ReportsPage })))
 
-import {
-  SettingsPage,
-} from './features/settings/SettingsPage'
+const SettingsPage = lazy(() => import('./features/settings/SettingsPage').then(module => ({ default: module.SettingsPage })))
 
 function App() {
   return (
     <BrowserRouter>
+      <Suspense fallback={
+        <div role="status" aria-live="polite" className="mx-auto my-8 max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-6 text-center">
+          <p className="font-semibold">Cargando módulo…</p>
+          <p className="mt-2 text-sm text-slate-400">Preparando tu espacio de trabajo.</p>
+        </div>
+      }>
       <Routes>
         <Route
           element={<AppLayout />}
@@ -241,6 +228,7 @@ function App() {
           />
         </Route>
       </Routes>
+      </Suspense>
     </BrowserRouter>
   )
 }

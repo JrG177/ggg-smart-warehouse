@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 
@@ -518,6 +519,10 @@ function formatReconciliationDifference(
 }
 
 export function BillingPage() {
+  const completingInvoiceRef = useRef(false)
+  const [completingInvoiceId, setCompletingInvoiceId] = useState('')
+  const [completionErrors, setCompletionErrors] = useState<Record<string, string>>({})
+
   const [invoices, setInvoices] =
     useState<Invoice[]>([])
 
@@ -1263,7 +1268,7 @@ const handleInvoiceCsvImported =
     setNewInvoiceImportData(data)
     setNewInvoiceCsvFile(file)
     setNewInvoiceNumber(data.invoiceNumber)
-    setNewInvoicePackageCount(String(data.packageCount))
+    setNewInvoicePackageCount('')
     setError('')
   }
 
@@ -1331,15 +1336,6 @@ const continueToReceptionSelection =
       !newInvoiceImportData.valid
     ) {
       setError('Los totales del CSV no coinciden. Corrige el archivo antes de continuar.')
-      return
-    }
-
-    if (
-      newInvoiceMode === 'csv' &&
-      newInvoiceImportData &&
-      packageCount !== newInvoiceImportData.packageCount
-    ) {
-      setError('El número de bultos debe coincidir con el total leído del CSV.')
       return
     }
 
@@ -1431,9 +1427,7 @@ const createNewInvoice =
               newInvoiceTrailer,
 
             packageCount:
-              Number(
-                newInvoicePackageCount,
-              ),
+              newInvoiceMode === 'csv' ? 0 : Number(newInvoicePackageCount),
 
             receptionIds:
               selectedReceptionIds,
@@ -1961,11 +1955,15 @@ const saveInvoiceChanges =
     }
   }
 
-  const completeInvoice =
+  const performCompleteInvoice =
     async (
       invoice:
         Invoice,
     ) => {
+      const reportCompletionError = (message: string) => {
+        setError(message)
+        setCompletionErrors(current => ({ ...current, [invoice.id]: message }))
+      }
       const imported = getInvoiceImport(invoice)
       const invoiceParts =
         invoice
@@ -2006,10 +2004,10 @@ const saveInvoiceChanges =
 
       const finalPackageCount =
         Number(
-          completionPackageCounts[
-            invoice.id
-          ] ||
-            '',
+          completionPackageCounts[invoice.id] ??
+            (Number(invoice.package_count || 0) > 0
+              ? String(invoice.package_count)
+              : ''),
         )
 
       if (imported) {
@@ -2028,13 +2026,13 @@ const saveInvoiceChanges =
                 .slice(0, 4)
                 .join(', ')
 
-            setError(
+            reportCompletionError(
               `Todavía falta comprobar la factura con el escáner. ${loadCompletion.scannedQuantity} de ${loadCompletion.expectedQuantity} unidades registradas${missing ? `. Pendientes: ${missing}` : ''}.`,
             )
             return
           }
         } catch (completionError) {
-          setError(
+          reportCompletionError(
             completionError instanceof Error
               ? completionError.message
               : 'No se pudo comprobar el avance de los escaneos.',
@@ -2042,7 +2040,7 @@ const saveInvoiceChanges =
           return
         }
       } else if (!allReviewed) {
-        setError(
+        reportCompletionError(
           'Debes marcar todas las recepciones antes de completar la factura.',
         )
         return
@@ -2055,14 +2053,14 @@ const saveInvoiceChanges =
         finalPackageCount <
           1
       ) {
-        setError(
+        reportCompletionError(
           'Captura un # de Bultos válido antes de completar la factura.',
         )
         return
       }
 
       try {
-        setError(
+        reportCompletionError(
           '',
         )
 
@@ -2114,7 +2112,7 @@ const saveInvoiceChanges =
       } catch (
         completeError
       ) {
-        setError(
+        reportCompletionError(
           completeError instanceof
             Error
             ? completeError.message
@@ -2123,6 +2121,23 @@ const saveInvoiceChanges =
       }
     }
 
+
+  const completeInvoice = async (invoice: Invoice) => {
+    if (completingInvoiceRef.current) return
+    completingInvoiceRef.current = true
+    setCompletingInvoiceId(invoice.id)
+    setCompletionErrors(current => ({ ...current, [invoice.id]: '' }))
+    try {
+      await performCompleteInvoice(invoice)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo comprobar la factura.'
+      setError(message)
+      setCompletionErrors(current => ({ ...current, [invoice.id]: message }))
+    } finally {
+      completingInvoiceRef.current = false
+      setCompletingInvoiceId('')
+    }
+  }
 
   const toggleInvoicePartReviewed =
     async (
@@ -2637,7 +2652,7 @@ const saveInvoiceChanges =
             </div>
           )}
         </div>
-        <div className="flex flex-col gap-4 border-b border-slate-800 p-5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-col gap-4 border-b border-slate-800 p-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex gap-2">
             <button
               type="button"
@@ -2983,14 +2998,14 @@ const saveInvoiceChanges =
                     key={invoice.id}
                     className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950"
                   >
-                    <div className="flex flex-col gap-4 border-b border-slate-800 p-5 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex min-w-0 flex-col gap-4 border-b border-slate-800 p-4 xl:flex-row xl:items-start xl:justify-between">
                       <div>
-                        <p className="text-xl font-bold">
+                        <p className="break-words text-lg font-bold">
                           {invoice.invoice_number}
                         </p>
 
                         <p className="mt-1 text-sm text-slate-400">
-                          {invoice.carrier} · Trailer {invoice.trailer || 'sin asignar'} · {invoice.package_count} bultos · {invoice.invoice_receptions.length} recepciones
+                          {invoice.carrier} · Trailer {invoice.trailer || 'sin asignar'} · {Number(invoice.package_count) > 0 ? `${invoice.package_count} bultos` : 'Bultos por confirmar'}{invoice.invoice_receptions.length > 0 ? ` · ${invoice.invoice_receptions.length} recepciones` : ''}
                         </p>
 
                         {imported && (
@@ -3039,7 +3054,7 @@ const saveInvoiceChanges =
                         )}
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex min-w-0 flex-wrap items-start gap-2 xl:max-w-xl">
                         {imported && invoice.status === 'open' && (
                           <button
                             type="button"
@@ -3053,6 +3068,9 @@ const saveInvoiceChanges =
                           </button>
                         )}
 
+                        <details className="w-full rounded-xl border border-slate-700 p-2 sm:w-auto">
+                          <summary className="cursor-pointer px-2 py-1 text-sm font-semibold">Documentos y exportaciones</summary>
+                          <div className="mt-2 flex flex-wrap gap-2">
                         {imported && <button type="button" onClick={() => exportInvoicePdf(invoice)} className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-300"><Download size={17} />PDF</button>}
                         {imported && <button type="button" onClick={() => exportInvoiceCsv(invoice)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-300"><FileSpreadsheet size={17} />Excel</button>}
 
@@ -3088,6 +3106,9 @@ const saveInvoiceChanges =
                             Ver factura
                           </button>
                         )}
+
+                          </div>
+                        </details>
 
                         {invoice.status ===
                           'open' && (
@@ -3140,18 +3161,7 @@ const saveInvoiceChanges =
 
                             <button
                               type="button"
-                              disabled={
-                                !canCompleteInvoice ||
-                                !Number.isInteger(
-                                  Number(
-                                    completionPackageCount,
-                                  ),
-                                ) ||
-                                Number(
-                                  completionPackageCount || 0,
-                                ) <
-                                  1
-                              }
+                              disabled={!!completingInvoiceId}
                               onClick={() =>
                                 void completeInvoice(
                                   invoice,
@@ -3159,8 +3169,17 @@ const saveInvoiceChanges =
                               }
                               className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 disabled:cursor-not-allowed disabled:opacity-30"
                             >
-                              Completar factura
+                              {completingInvoiceId === invoice.id ? 'Comprobando factura…' : 'Completar factura'}
                             </button>
+                            <p className="w-full text-xs text-slate-400">
+                              {canCompleteInvoice
+                                ? 'Captura los bultos físicos y pulsa Completar factura.'
+                                : imported
+                                  ? 'Pulsa Completar factura para volver a comprobar los escaneos guardados.'
+                                  : 'Debes verificar todas las partes de las recepciones para completar.'}
+                            </p>
+                            {completionErrors[invoice.id] && <p role="alert" className="w-full rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm font-semibold text-red-400">{completionErrors[invoice.id]}</p>}
+
                           </>
                         )}
                       </div>
@@ -3879,7 +3898,7 @@ const saveInvoiceChanges =
               </div>
             </div>
 
-            <div>
+            {newInvoiceMode !== 'csv' && <div>
               <label
                 htmlFor="new-invoice-package-count"
                 className="mb-2 block text-sm font-semibold text-slate-300"
@@ -3906,7 +3925,7 @@ const saveInvoiceChanges =
                 placeholder="0"
                 className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
               />
-            </div>
+            </div>}
 
             <div>
               <p className="mb-2 text-sm font-semibold text-slate-300">
@@ -4021,7 +4040,7 @@ const saveInvoiceChanges =
                 </p>
 
                 <p className="mt-1 text-sm text-slate-400">
-                  {newInvoiceCarrier} · {newInvoicePackageCount} bultos
+                  {newInvoiceCarrier} · {newInvoiceMode === 'csv' ? 'Bultos pendientes de confirmar' : `${newInvoicePackageCount} bultos`}
                   {newInvoiceMode === 'csv' && newInvoiceImportData
                     ? ` · ${newInvoiceImportData.lines.length} partidas · ${newInvoiceImportData.totalQuantity} unidades`
                     : ''}

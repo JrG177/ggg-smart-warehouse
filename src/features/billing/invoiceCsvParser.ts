@@ -206,7 +206,6 @@ export function parseInvoiceCsvText(
   const originIndex = getHeaderIndexes(headers, 'ORIGEN')[0]
   const sellerIndex = getHeaderIndexes(headers, 'VENDEDOR')[0]
   const weightIndexes = getHeaderIndexes(headers, 'PESO')
-  const packageIndexes = getHeaderIndexes(headers, 'BULTOS')
   const invoiceIndex = getHeaderIndexes(headers, 'FACTURA')[0]
   const dateIndex = getHeaderIndexes(headers, 'FECHA')[0]
   const invoiceTotalIndex = getHeaderIndexes(headers, 'VALOR FACTURA')[0]
@@ -230,7 +229,6 @@ export function parseInvoiceCsvText(
     parseInvoiceIdentifier(rawInvoiceIdentifier)
 
   const lineWeightIndex = weightIndexes[1] ?? tariffQuantityIndex
-  const linePackageIndex = packageIndexes[1]
 
   const lines: InvoiceImportLine[] = []
 
@@ -279,11 +277,7 @@ export function parseInvoiceCsvText(
       ),
       origin: getValue(row, originIndex),
       seller: getValue(row, sellerIndex),
-      packageCount: parseNumber(
-        getValue(row, linePackageIndex),
-        'Los bultos',
-        lineNumber,
-      ),
+      packageCount: 0, // Physical packages are confirmed at invoice completion.
     })
   }
 
@@ -295,10 +289,7 @@ export function parseInvoiceCsvText(
     getValue(metadataRow, invoiceTotalIndex),
     'El valor de la factura',
   )
-  const packageCount = parseNumber(
-    getValue(metadataRow, packageIndexes[0]),
-    'El total de bultos',
-  )
+  const packageCount = 0
   const totalWeight = parseNumber(
     getValue(metadataRow, weightIndexes[0]),
     'El peso total',
@@ -315,14 +306,9 @@ export function parseInvoiceCsvText(
     (total, line) => total + line.weight,
     0,
   )
-  const calculatedPackages = lines.reduce(
-    (total, line) => total + line.packageCount,
-    0,
-  )
   const checks = [
     makeCheck('quantity', 'Unidades', totalQuantity, totalQuantity, 0),
     makeCheck('weight', 'Peso', totalWeight, calculatedWeight, 0.001),
-    makeCheck('packages', 'Bultos', packageCount, calculatedPackages, 0),
     makeCheck('value', 'Valor', invoiceTotal, calculatedValue, 0.005),
   ]
   const warnings: string[] = []

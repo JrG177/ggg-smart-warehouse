@@ -212,7 +212,20 @@ function formatDate(
     )
 }
 
+function dateKey(value: string | null | undefined) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+function invoiceSearchKey(value: string) {
+  return value.toLowerCase().replace(/[\s_-]/g, '')
+}
+
 export function ShipmentsPage() {
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [dateType, setDateType] = useState<'shipment' | 'invoice'>('shipment')
   const [
     shipments,
     setShipments,
@@ -445,8 +458,11 @@ export function ShipmentsPage() {
                 invoice?.carrier ===
                   carrierFilter
 
+              const selectedDate = dateKey(dateType === 'invoice' ? invoice?.created_at : shipment.shipped_at)
+              const matchesDate = (!dateFrom || selectedDate >= dateFrom) && (!dateTo || selectedDate <= dateTo)
+              const matchesInvoiceNumber = !!search && invoiceSearchKey(invoice?.invoice_number || '').includes(invoiceSearchKey(search))
               const matchesSearch =
-                !search ||
+                !search || matchesInvoiceNumber ||
                 [
                   invoice
                     ?.invoice_number ||
@@ -482,6 +498,7 @@ export function ShipmentsPage() {
 
               return (
                 matchesCarrier &&
+                matchesDate &&
                 matchesSearch
               )
             },
@@ -503,6 +520,9 @@ export function ShipmentsPage() {
       },
       [
         carrierFilter,
+        dateFrom,
+        dateTo,
+        dateType,
         shipments,
         searchTerm,
         sortOrder,
@@ -576,8 +596,8 @@ export function ShipmentsPage() {
                       .value,
                   )
                 }
-                placeholder="Buscar factura o recepción..."
-                className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm outline-none sm:w-80"
+                placeholder="Factura (INV4611), recepción o carrier"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 py-2.5 pl-10 pr-4 text-sm outline-none"
               />
             </div>
 
@@ -659,6 +679,18 @@ export function ShipmentsPage() {
           </div>
         </div>
 
+        <div className="grid gap-3 border-b border-slate-800 p-5 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="text-sm text-slate-400">Buscar por fecha de
+            <select value={dateType} onChange={event => setDateType(event.target.value as 'shipment' | 'invoice')} className="mt-1 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-white">
+              <option value="shipment">Embarque</option><option value="invoice">Creación de factura</option>
+            </select>
+          </label>
+          <label className="text-sm text-slate-400">Desde<input type="date" value={dateFrom} onChange={event => setDateFrom(event.target.value)} className="mt-1 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-white" /></label>
+          <label className="text-sm text-slate-400">Hasta<input type="date" value={dateTo} onChange={event => setDateTo(event.target.value)} className="mt-1 w-full min-w-0 rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-white" /></label>
+          <button type="button" onClick={() => { setSearchTerm(''); setCarrierFilter('ALL'); setDateFrom(''); setDateTo('') }} className="self-end rounded-xl border border-slate-700 px-3 py-2.5 text-sm text-slate-300">Limpiar filtros</button>
+          {dateFrom && dateTo && dateFrom > dateTo && <p role="alert" className="text-sm text-red-400">La fecha Desde debe ser anterior o igual a Hasta.</p>}
+        </div>
+
         <div className="p-5">
           {loading ? (
             <div className="py-12 text-center text-slate-500">
@@ -667,7 +699,7 @@ export function ShipmentsPage() {
           ) : filtered.length ===
             0 ? (
             <div className="rounded-xl border border-dashed border-slate-700 py-12 text-center text-slate-500">
-              No hay embarques registrados.
+              {shipments.length ? 'No hay embarques que coincidan con los filtros.' : 'No hay embarques registrados.'}
             </div>
           ) : (
             <div className="space-y-6">
