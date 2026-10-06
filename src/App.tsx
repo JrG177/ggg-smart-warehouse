@@ -1,3 +1,4 @@
+import { InvoiceUxTrialPage } from './features/trials/InvoiceUxTrialPage'
 import { A1Page } from './features/a1/A1Page'
 import {
   BrowserRouter,
@@ -146,6 +147,7 @@ function App() {
           />
 
           <Route path="/a1" element={<A1Page />} />
+          {import.meta.env.DEV && <Route path="/pruebas/factura" element={<InvoiceUxTrialPage />} />}
 
           <Route
             path="/shipments"
