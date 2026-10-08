@@ -6,9 +6,15 @@ export interface A1Box {
   receivedDate: string
   location: string
   noms: boolean
-  osd: '' | 'Sobrante' | 'Faltante' | 'Daño'
+  osd: '' | 'Sobrante' | 'Faltante' | 'Daño' | 'Retenido'
   note: string
   photo: string
+  classification?: 'normal' | 'nom' | 'osnd'
+  receptionClosedAt?: string
+  departedAt?: string
+  departedDate?: string
+  // Informational evidence entered externally; operators cannot authorize release.
+  externalRelease?: { reference: string; at: string }
 }
 export interface A1Invoice {
   id: string
@@ -26,6 +32,9 @@ export interface A1Data {
   events: A1Event[]
 }
 export type A1Action =
+  | { type: 'classify'; id: string; classification: 'normal' | 'nom' | 'osnd'; note: string }
+  | { type: 'finishReceiving'; ids: string[] }
+  | { type: 'exitBoxes'; ids: string[]; date: string }
   | { type: 'cleanTrackings' }
   | { type: 'receive'; tracking: string; date: string; number?: string }
   | { type: 'edit'; id: string; changes: Omit<A1Box, 'id' | 'tracking'> }
@@ -76,11 +85,66 @@ export function readA1Data(): A1Data {
   return data
 }
 
+export function a1Held(box: A1Box) {
+  return !!(box.osd || box.classification === 'osnd') && !box.externalRelease
+}
+export function a1Departed(data: A1Data, box: A1Box) {
+  return box.departedAt || boxInvoice(data, box.id)?.departedAt || null
+}
+export function a1WorkStatus(data: A1Data, box: A1Box) {
+  if (a1Departed(data, box)) return 'Salió'
+  if (a1Held(box)) return 'OSND · Retenida'
+  if (!box.classification || !box.receptionClosedAt) return 'Pendiente de clasificación / cierre'
+  return boxInvoice(data, box.id) ? 'Asignada a factura' : 'Falta de factura'
+}
+export function a1Matches(box: A1Box, query: string) {
+  const key = query.replace(/\s/g, '').toUpperCase()
+  if (!key) return true
+  if (/^\d{4}$/.test(key)) return box.tracking.endsWith(key) || box.number === key
+  return box.tracking === key || box.number === key || `A1-${box.number}` === key
+}
+function validDate(date: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T12:00:00Z`)) || new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) !== date) throw new Error('Selecciona una fecha válida.')
+}
 // Pure transitions: all validation happens before the browser save.
 export function applyA1Action(data: A1Data, action: A1Action, id: string, at: string): { data: A1Data; message: string } {
   const next = structuredClone(data)
   let message = ''
-  if (action.type === 'cleanTrackings') {
+  if (action.type === 'classify') {
+    const box = next.boxes.find(item => item.id === action.id)
+    if (!box) throw new Error('Caja no encontrada.')
+    if (a1Departed(next, box)) throw new Error('Esta caja ya salió.')
+    if (a1Held(box) && action.classification !== 'osnd') throw new Error('OSND retenida: se requiere autorización externa. El operador no puede liberarla.')
+    if (action.classification === 'osnd' && !action.note.trim()) throw new Error('Agrega una observación para OSND.')
+    box.classification = action.classification
+    box.noms = action.classification === 'nom'
+    if (action.classification === 'osnd') box.osd ||= 'Retenido'
+    box.note = action.note.trim()
+    message = `Tracking ${box.tracking}: ${action.classification.toUpperCase()} clasificado.`
+  } else if (action.type === 'finishReceiving') {
+    if (!action.ids.length || new Set(action.ids).size !== action.ids.length) throw new Error('Selecciona cajas sin duplicados.')
+    const boxes = action.ids.map(id => next.boxes.find(box => box.id === id))
+    if (boxes.some(box => !box || !box.classification)) throw new Error('Clasifica cada caja antes de finalizar la recepción.')
+    if (boxes.some(box => box && a1Departed(next, box))) throw new Error('Una caja ya salió.')
+    boxes.forEach(box => { box!.receptionClosedAt ||= at })
+    message = `Recepción finalizada: ${boxes.length} cajas clasificadas. Normal y NOM pasan a Falta de factura; OSND queda retenida.`
+  } else if (action.type === 'exitBoxes') {
+    validDate(action.date)
+    if (!action.ids.length || new Set(action.ids).size !== action.ids.length) throw new Error('Escanea cajas sin duplicados antes de confirmar la salida.')
+    const boxes = action.ids.map(id => next.boxes.find(box => box.id === id))
+    if (boxes.some(box => !box)) throw new Error('Caja no encontrada.')
+    for (const box of boxes) {
+      if (a1Departed(next, box!)) throw new Error(`Tracking ${box!.tracking}: ya salió.`)
+      if (a1Held(box!)) throw new Error(`Tracking ${box!.tracking}: OSND retenida. No puede salir.`)
+      if (!box!.classification || !box!.receptionClosedAt) throw new Error('Finaliza la clasificación de recepción antes de dar salida.')
+      if (action.date < box!.receivedDate) throw new Error('La salida no puede ser anterior a la recepción.')
+    }
+    boxes.forEach(box => { box!.departedAt = at; box!.departedDate = action.date; })
+    for (const invoice of next.invoices) {
+      if (!invoice.departedAt && invoice.boxIds.length && invoice.boxIds.every(id => next.boxes.find(box => box.id === id)?.departedAt)) invoice.departedAt = at
+    }
+    message = `Salida registrada: ${boxes.length} cajas · ${action.date}. Recepciones e historial conservados.`
+  } else if (action.type === 'cleanTrackings') {
     const seen = new Map<string, A1Box>()
     let count = 0
     for (const box of next.boxes) {
@@ -110,7 +174,7 @@ export function applyA1Action(data: A1Data, action: A1Action, id: string, at: st
   } else if (action.type === 'edit') {
     const box = next.boxes.find(item => item.id === action.id)
     if (!box) throw new Error('Caja no encontrada.')
-    if (boxInvoice(next, box.id)?.departedAt) throw new Error('Esta caja ya salió. Su registro se conserva en el historial.')
+    if (a1Departed(next, box)) throw new Error('Esta caja ya salió. Su registro se conserva en el historial.')
     const number = action.changes.number.trim() ? normalizeBoxNumber(action.changes.number) : ''
     if (number && next.boxes.some(item => item.id !== box.id && item.number === number)) {
       throw new Error(`El número ${number} ya pertenece a otra caja; no se puede reutilizar.`)
@@ -118,7 +182,10 @@ export function applyA1Action(data: A1Data, action: A1Action, id: string, at: st
     const date = action.changes.receivedDate
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || new Date(`${date}T12:00:00`).toISOString().slice(0, 10) !== date) throw new Error('Fecha inválida.')
     if (action.changes.osd && !action.changes.note.trim()) throw new Error('Agrega una observación para OS&D.')
-    Object.assign(box, action.changes, { number, location: action.changes.location.trim(), note: action.changes.note.trim() })
+    if (action.changes.externalRelease !== box.externalRelease && JSON.stringify(action.changes.externalRelease) !== JSON.stringify(box.externalRelease)) throw new Error('El operador no puede autorizar liberaciones OSND.')
+    if (a1Held(box) && !action.changes.osd) throw new Error('OSND retenida: no se puede quitar la marca sin autorización externa.')
+    if (action.changes.osd) box.classification = 'osnd'
+    Object.assign(box, action.changes, { classification: action.changes.osd ? 'osnd' : action.changes.noms ? 'nom' : action.changes.classification ? 'normal' : undefined, number, location: action.changes.location.trim(), note: action.changes.note.trim() })
     message = `Caja ${number || box.tracking} actualizada.`
   } else if (action.type === 'createInvoice') {
     const suffix = action.number.trim().replace(/^INV[- ]*/i, '').toUpperCase()
@@ -146,6 +213,9 @@ export function applyA1Action(data: A1Data, action: A1Action, id: string, at: st
         box = next.boxes.find(item => item.number === number)
       }
       if (!box) throw new Error('Caja no encontrada. Registra el tracking o vincula el sticker en Recepciones/Inventario.')
+      if (a1Departed(next, box)) throw new Error('Esta caja ya está salida.')
+      if (a1Held(box)) throw new Error('OSND retenida: no se puede asignar a una factura.')
+      if (!box.classification || !box.receptionClosedAt) throw new Error('Finaliza la recepción y clasificación antes de asignar.')
       const previous = boxInvoice(next, box.id)
       if (previous) throw new Error(previous.id === invoice.id
         ? 'Esta caja ya está en la factura; no se duplicó.'
@@ -158,6 +228,7 @@ export function applyA1Action(data: A1Data, action: A1Action, id: string, at: st
       message = `Caja retirada de ${invoice.number}; sigue en inventario.`
     } else {
       if (!invoice.boxIds.length) throw new Error('Agrega al menos una caja antes de confirmar la salida.')
+      if (invoice.boxIds.some(id => !next.boxes.find(box => box.id === id)?.departedAt)) throw new Error('Escanea todas las cajas en la sección Salida antes de completar la salida de factura.')
       invoice.departedAt = at
       message = `${invoice.number}: salida de ${invoice.boxIds.length} caja(s) confirmada.`
     }

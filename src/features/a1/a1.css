@@ -51,3 +51,10 @@
 .a1-pending { padding: 12px; border: 2px solid #3989e7; border-radius: 9px; }
 .a1-flow-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .a1-last { margin-top: 12px; border-left: 4px solid #22a45b; padding-left: 10px; }
+
+.a1-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.a1-classification-row { padding: 14px 0; border-bottom: 1px solid var(--ggg-border); }
+.a1-classification-row strong, .a1-classification-row small { display: block; }
+.a1-classification-row .a1-flow-actions { margin: 8px 0; }
+.a1-classification-row [aria-pressed=true] { border: 2px solid var(--ggg-primary); }
+.a1-page .a1-primary, .a1-tabs [aria-current] { background: var(--ggg-primary); color: #fff; border-color: var(--ggg-primary); }

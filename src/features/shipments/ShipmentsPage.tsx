@@ -1,3 +1,4 @@
+import { ShipmentInvoiceDetail } from './ShipmentInvoiceDetail'
 import {
   useEffect,
   useMemo,
@@ -223,6 +224,8 @@ function invoiceSearchKey(value: string) {
 }
 
 export function ShipmentsPage() {
+  const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null)
+  const detailParts = useMemo(() => detailInvoice?.invoice_receptions.flatMap(item => getReception(item)?.pallets.flatMap(pallet => pallet.pallet_parts) || []) || [], [detailInvoice])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [dateType, setDateType] = useState<'shipment' | 'invoice'>('shipment')
@@ -725,12 +728,12 @@ export function ShipmentsPage() {
                     >
                       <div className="flex flex-col gap-4 border-b border-slate-800 p-5 lg:flex-row lg:items-center lg:justify-between">
                         <div>
-                          <p className="text-xl font-bold text-white">
+                          <button type="button" onClick={() => setDetailInvoice(invoice)} className="text-left text-xl font-bold text-white underline decoration-slate-500 underline-offset-4" aria-label={`Ver contenido de ${invoice.invoice_number}`}>
                             {
                               invoice
                                 .invoice_number
                             }
-                          </p>
+                          </button>
 
                           <p className="mt-1 text-sm text-slate-400">
                             {
@@ -865,6 +868,7 @@ export function ShipmentsPage() {
           )}
         </div>
       </section>
+      {detailInvoice && <ShipmentInvoiceDetail key={detailInvoice.id} invoiceId={detailInvoice.id} invoiceNumber={detailInvoice.invoice_number} parts={detailParts} onClose={() => setDetailInvoice(null)} />}
     </div>
   )
 }
